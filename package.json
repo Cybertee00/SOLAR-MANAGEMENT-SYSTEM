@@ -1,0 +1,32 @@
+{
+  "name": "solar-om-maintenance-app",
+  "version": "1.0.0",
+  "description": "Digital Preventive and Corrective Maintenance Management Application for Solar Power Plant",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "dev:mobile": "node scripts/get-ip.js && concurrently \"npm run server\" \"npm run client:mobile\"",
+    "dev:usb": "node scripts/setup-usb-android.js && concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm start",
+    "client:mobile": "cd client && npm run start:mobile",
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install",
+    "setup-db": "cd server && node scripts/setup-db.js",
+    "get-ip": "node scripts/get-ip.js",
+    "update-ip": "node scripts/update-ip.js",
+    "setup-usb": "node scripts/setup-usb-android.js",
+    "remove-usb": "node scripts/remove-usb-android.js"
+  },
+  "keywords": [
+    "solar",
+    "maintenance",
+    "O&M",
+    "checklist"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "mammoth": "^1.11.0"
+  }
+}
