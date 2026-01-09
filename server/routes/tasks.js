@@ -4,35 +4,54 @@ const { mapTaskDataToTemplate } = require('../utils/dataMapper');
 const { generateWordDocument } = require('../utils/wordGenerator');
 const { generateExcelDocument } = require('../utils/excelGenerator');
 const { emitEvent } = require('../utils/webhookEmitter');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { notifyTaskAssigned, notifyTaskFlagged } = require('../utils/notifications');
+const { requireAuth, requireAdmin, requireSuperAdmin, isSuperAdmin, isAdmin } = require('../middleware/auth');
 const { validateCreateTask } = require('../middleware/inputValidation');
 
 module.exports = (pool) => {
   const router = express.Router();
 
-  // Get all tasks (authenticated users can see their tasks, admins see all)
+  // Get all tasks (all authenticated users can see all tasks)
   router.get('/', requireAuth, async (req, res) => {
     try {
       const { status, task_type, asset_id, completed_date } = req.query;
+      
+      // Use CTE to aggregate assigned_users separately to ensure all tasks are returned
       let query = `
-        SELECT t.*, 
+        WITH task_assignments_agg AS (
+          SELECT 
+            ta.task_id,
+            COALESCE(
+              json_agg(jsonb_build_object(
+                'id', u.id,
+                'full_name', u.full_name,
+                'username', u.username,
+                'email', u.email
+              )) FILTER (WHERE u.id IS NOT NULL),
+              '[]'::json
+            ) as assigned_users
+          FROM task_assignments ta
+          LEFT JOIN users u ON ta.user_id = u.id
+          GROUP BY ta.task_id
+        )
+        SELECT t.id, t.task_code, t.checklist_template_id, t.asset_id, t.assigned_to,
+               t.task_type, t.status, t.scheduled_date, t.started_at, t.completed_at,
+               t.duration_minutes, t.overall_status, t.parent_task_id, t.created_at, t.updated_at,
+               t.hours_worked, t.budgeted_hours, t.is_flagged, t.flag_reason, t.assigned_at,
+               t.can_open_before_scheduled,
                a.asset_code, a.asset_name,
-               u.full_name as assigned_to_name,
-               ct.template_name, ct.template_code
+               ct.template_name, ct.template_code,
+               COALESCE(taa.assigned_users, '[]'::json) as assigned_users
         FROM tasks t
         LEFT JOIN assets a ON t.asset_id = a.id
-        LEFT JOIN users u ON t.assigned_to = u.id
         LEFT JOIN checklist_templates ct ON t.checklist_template_id = ct.id
+        LEFT JOIN task_assignments_agg taa ON t.id = taa.task_id
         WHERE 1=1
       `;
       const params = [];
       let paramCount = 1;
 
-      // Non-admin users can only see tasks assigned to them
-      if (req.session && req.session.role !== 'admin') {
-        query += ` AND t.assigned_to = $${paramCount++}`;
-        params.push(req.session.userId);
-      }
+      // All users can see all tasks (no filtering by assignment)
 
       if (status) {
         query += ` AND t.status = $${paramCount++}`;
@@ -53,8 +72,38 @@ module.exports = (pool) => {
 
       query += ' ORDER BY t.created_at DESC';
 
+      // Log query for debugging
+      console.log(`[TASKS] User: ${req.session?.username || 'unknown'} (${req.session?.role || 'unknown'}) requesting tasks`);
+      console.log(`[TASKS] Query params:`, params);
+      
       const result = await pool.query(query, params);
-      res.json(result.rows);
+      
+      // Parse assigned_users JSON array and ensure status is included
+      const tasks = result.rows.map(task => {
+        if (task.assigned_users && typeof task.assigned_users === 'string') {
+          try {
+            task.assigned_users = JSON.parse(task.assigned_users);
+          } catch (e) {
+            task.assigned_users = [];
+          }
+        }
+        // Ensure status is always present (default to 'pending' if missing)
+        if (!task.status) {
+          task.status = 'pending';
+        }
+        return task;
+      });
+      
+      console.log(`[TASKS] Fetched ${tasks.length} tasks for user: ${req.session?.username || 'unknown'}`);
+      console.log(`[TASKS] Status breakdown:`, 
+        tasks.reduce((acc, t) => {
+          acc[t.status] = (acc[t.status] || 0) + 1;
+          return acc;
+        }, {})
+      );
+      console.log(`[TASKS] Task codes:`, tasks.map(t => t.task_code).slice(0, 5));
+      
+      res.json(tasks);
     } catch (error) {
       console.error('Error fetching tasks:', error);
       res.status(500).json({ error: 'Failed to fetch tasks' });
@@ -64,15 +113,36 @@ module.exports = (pool) => {
   // Get task by ID
   router.get('/:id', requireAuth, async (req, res) => {
     try {
+      // Get task with assigned users
+      // Use subquery to avoid JSONB grouping issues
       const result = await pool.query(`
+        WITH task_assignments_agg AS (
+          SELECT ta.task_id,
+                 COALESCE(
+                   json_agg(jsonb_build_object(
+                     'id', u.id,
+                     'full_name', u.full_name,
+                     'username', u.username,
+                     'email', u.email
+                   )) FILTER (WHERE u.id IS NOT NULL),
+                   '[]'::json
+                 ) as assigned_users
+          FROM task_assignments ta
+          LEFT JOIN users u ON ta.user_id = u.id
+          WHERE ta.task_id = $1
+          GROUP BY ta.task_id
+        )
         SELECT t.*, 
                a.asset_code, a.asset_name, a.asset_type,
-               u.full_name as assigned_to_name,
-               ct.*
+               ct.id as template_id, ct.template_code, ct.template_name, ct.description,
+               ct.asset_type as template_asset_type, ct.task_type as template_task_type,
+               ct.frequency, ct.checklist_structure, ct.validation_rules, ct.cm_generation_rules,
+               ct.created_at as template_created_at, ct.updated_at as template_updated_at,
+               COALESCE(taa.assigned_users, '[]'::json) as assigned_users
         FROM tasks t
         LEFT JOIN assets a ON t.asset_id = a.id
-        LEFT JOIN users u ON t.assigned_to = u.id
         LEFT JOIN checklist_templates ct ON t.checklist_template_id = ct.id
+        LEFT JOIN task_assignments_agg taa ON t.id = taa.task_id
         WHERE t.id = $1
       `, [req.params.id]);
 
@@ -92,6 +162,15 @@ module.exports = (pool) => {
         task.cm_generation_rules = JSON.parse(task.cm_generation_rules);
       }
       
+      // Parse assigned_users JSON array
+      if (task.assigned_users && typeof task.assigned_users === 'string') {
+        try {
+          task.assigned_users = JSON.parse(task.assigned_users);
+        } catch (e) {
+          task.assigned_users = [];
+        }
+      }
+      
       res.json(task);
     } catch (error) {
       console.error('Error fetching task:', error);
@@ -99,15 +178,17 @@ module.exports = (pool) => {
     }
   });
 
-  // Create task (admin only)
-  router.post('/', requireAdmin, validateCreateTask, async (req, res) => {
+  // Create task (any authenticated user can create, but only superadmin can set budgeted_hours)
+  router.post('/', requireAuth, validateCreateTask, async (req, res) => {
     try {
       const {
         checklist_template_id,
         asset_id,
-        assigned_to,
+        assigned_to, // Can be single user ID or array of user IDs
         task_type,
-        scheduled_date
+        scheduled_date,
+        hours_worked,
+        budgeted_hours
       } = req.body;
 
       // Validate required fields
@@ -118,6 +199,11 @@ module.exports = (pool) => {
         return res.status(400).json({ error: 'asset_id is required' });
       }
 
+      // Only superadmin can set budgeted_hours
+      if (budgeted_hours !== undefined && !isSuperAdmin(req)) {
+        return res.status(403).json({ error: 'Only super admin can set budgeted hours' });
+      }
+
       const taskType = task_type || 'PM';
       
       // Validate task type
@@ -126,38 +212,106 @@ module.exports = (pool) => {
         return res.status(400).json({ error: `task_type must be one of: ${validTaskTypes.join(', ')}` });
       }
       
-      // PM tasks: Use current date as scheduled_date
-      // PCM tasks: Use provided scheduled_date (required)
-      // UCM tasks: scheduled_date is optional (can be set later)
+      // Allow manual scheduling for all task types
+      // If scheduled_date is provided, use it; otherwise default to today
       let finalScheduledDate;
-      if (taskType === 'PM') {
-        // PM tasks automatically get today's date
-        finalScheduledDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-      } else if (taskType === 'PCM') {
-        // PCM tasks must have a scheduled_date provided
-        if (!scheduled_date) {
-          return res.status(400).json({ error: 'scheduled_date is required for PCM tasks' });
+      if (scheduled_date) {
+        // Validate that scheduled_date is not in the past
+        const scheduledDate = new Date(scheduled_date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        scheduledDate.setHours(0, 0, 0, 0);
+        
+        if (scheduledDate < today) {
+          return res.status(400).json({ error: 'scheduled_date cannot be in the past' });
         }
+        
         finalScheduledDate = scheduled_date;
-      } else if (taskType === 'UCM') {
-        // UCM tasks can have scheduled_date set later (optional for creation)
-        finalScheduledDate = scheduled_date || null;
       } else {
-        // Default to current date if task type is unknown
-        finalScheduledDate = scheduled_date || new Date().toISOString().split('T')[0];
+        // Default to today if not provided
+        finalScheduledDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
       }
 
       const task_code = `${taskType}-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
+      
+      // Handle assigned_to - can be single ID, array of IDs, or null
+      const assignedUserIds = assigned_to 
+        ? (Array.isArray(assigned_to) ? assigned_to : [assigned_to]).filter(id => id)
+        : [];
+      
+      // Set assigned_at if task is assigned (use first user for backward compatibility)
+      const primaryAssignedTo = assignedUserIds.length > 0 ? assignedUserIds[0] : null;
+      const assignedAt = assignedUserIds.length > 0 ? new Date() : null;
 
       const result = await pool.query(
         `INSERT INTO tasks (
-          task_code, checklist_template_id, asset_id, assigned_to, task_type, scheduled_date, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING *`,
-        [task_code, checklist_template_id, asset_id, assigned_to || null, taskType, finalScheduledDate]
+          task_code, checklist_template_id, asset_id, assigned_to, task_type, scheduled_date, 
+          status, hours_worked, budgeted_hours, assigned_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9) RETURNING *`,
+        [
+          task_code, 
+          checklist_template_id, 
+          asset_id, 
+          primaryAssignedTo, // Keep for backward compatibility
+          taskType, 
+          finalScheduledDate,
+          hours_worked || 0,
+          budgeted_hours || null,
+          assignedAt
+        ]
       );
       
+      const task = result.rows[0];
+      
+      // Create task assignments for all assigned users
+      if (assignedUserIds.length > 0) {
+        // Insert all assignments
+        for (const userId of assignedUserIds) {
+          await pool.query(
+            `INSERT INTO task_assignments (task_id, user_id, assigned_at, assigned_by)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (task_id, user_id) DO NOTHING`,
+            [task.id, userId, assignedAt, req.session.userId]
+          );
+        }
+        
+        // Get asset and all assigned users for notifications
+        const [assetResult, usersResult] = await Promise.all([
+          pool.query('SELECT asset_name FROM assets WHERE id = $1', [asset_id]),
+          pool.query(
+            `SELECT id, full_name, username, email FROM users WHERE id = ANY($1::uuid[])`,
+            [assignedUserIds]
+          )
+        ]);
+        
+        task.asset_name = assetResult.rows[0]?.asset_name;
+        const assignedUsers = usersResult.rows;
+        
+        // Send notification to all assigned users
+        for (const assignedUser of assignedUsers) {
+          try {
+            await notifyTaskAssigned(pool, {
+              ...task,
+              asset_name: task.asset_name,
+              assigned_to: assignedUser.id // For notification function compatibility
+            }, assignedUser);
+          } catch (notifError) {
+            console.error(`Error sending assignment notification to ${assignedUser.email}:`, notifError);
+            // Don't fail task creation if notification fails
+          }
+        }
+        
+        // Add assigned_users array to task response
+        task.assigned_users = assignedUsers.map(u => ({
+          id: u.id,
+          full_name: u.full_name,
+          username: u.username,
+          email: u.email
+        }));
+      }
+      
       console.log(`Task created: ${task_code}, Type: ${taskType}, Scheduled: ${finalScheduledDate}`);
-      res.status(201).json(result.rows[0]);
+      res.status(201).json(task);
     } catch (error) {
       console.error('Error creating task:', error);
       console.error('Error details:', {
@@ -182,9 +336,73 @@ module.exports = (pool) => {
     }
   });
 
-  // Start task
-  router.patch('/:id/start', async (req, res) => {
+  // Start task (only assigned users can start tasks)
+  router.patch('/:id/start', requireAuth, async (req, res) => {
     try {
+      // First check if task exists and if user is assigned
+      const taskCheck = await pool.query(
+        `SELECT t.*, 
+                EXISTS (
+                  SELECT 1 FROM task_assignments ta 
+                  WHERE ta.task_id = t.id AND ta.user_id = $2
+                ) as is_assigned
+         FROM tasks t 
+         WHERE t.id = $1`,
+        [req.params.id, req.session.userId]
+      );
+
+      if (taskCheck.rows.length === 0) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+
+      const task = taskCheck.rows[0];
+      
+      // Check if user is assigned (admins/super_admins can start any task)
+      const role = req.session?.role;
+      const isAssigned = task.is_assigned || role === 'admin' || role === 'super_admin';
+      
+      if (!isAssigned) {
+        return res.status(403).json({ 
+          error: 'You can only start tasks assigned to you',
+          scheduled_date: task.scheduled_date
+        });
+      }
+
+      // Check scheduled date restriction (unless can_open_before_scheduled is true)
+      if (task.scheduled_date && !task.can_open_before_scheduled) {
+        const scheduledDate = new Date(task.scheduled_date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        scheduledDate.setHours(0, 0, 0, 0);
+        
+        if (scheduledDate > today) {
+          return res.status(400).json({ 
+            error: `Task cannot be started before scheduled date: ${task.scheduled_date}`,
+            scheduled_date: task.scheduled_date
+          });
+        }
+      }
+
+      // For CM tasks generated from PM tasks, check if spare requests are approved
+      if (task.task_type === 'PCM' || task.task_type === 'UCM' || (task.task_type === 'CM' && task.parent_task_id)) {
+        const spareRequestCheck = await pool.query(
+          `SELECT id, status FROM spare_requests 
+           WHERE task_id = $1 AND status IN ('pending', 'rejected')`,
+          [req.params.id]
+        );
+
+        if (spareRequestCheck.rows.length > 0) {
+          const pendingRequests = spareRequestCheck.rows.filter(r => r.status === 'pending');
+          if (pendingRequests.length > 0) {
+            return res.status(400).json({ 
+              error: 'Cannot start CM task: Spare requests must be approved before starting this task',
+              pending_spare_requests: pendingRequests.length
+            });
+          }
+        }
+      }
+
+      // Start the task
       const result = await pool.query(
         `UPDATE tasks 
          SET status = 'in_progress', started_at = CURRENT_TIMESTAMP 
@@ -192,9 +410,11 @@ module.exports = (pool) => {
          RETURNING *`,
         [req.params.id]
       );
+      
       if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Task not found or cannot be started' });
+        return res.status(400).json({ error: 'Task cannot be started (may already be started or completed)' });
       }
+      
       res.json(result.rows[0]);
     } catch (error) {
       console.error('Error starting task:', error);
@@ -213,6 +433,19 @@ module.exports = (pool) => {
       }
 
       const task = taskResult.rows[0];
+
+      // Check if task is locked (only admin/super_admin can update locked tasks)
+      if (task.is_locked && !isAdmin(req)) {
+        return res.status(403).json({ 
+          error: 'Task is locked and can only be updated by admin or super admin' 
+        });
+      }
+
+      // Technicians can only complete their own tasks
+      const role = req.session?.role;
+      if (role === 'technician' && task.assigned_to !== req.session.userId) {
+        return res.status(403).json({ error: 'You can only complete tasks assigned to you' });
+      }
       
       // For UCM tasks, use provided timestamps or current time
       let finalStartedAt = started_at ? new Date(started_at) : (task.started_at ? new Date(task.started_at) : new Date());

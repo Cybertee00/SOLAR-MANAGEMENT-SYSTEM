@@ -19,6 +19,8 @@ const helmet = require('helmet');
  */
 const securityHeaders = helmet({
   // Content Security Policy
+  // Note: CSP is primarily for frontend, but we relax it for API endpoints
+  // to allow cross-origin requests from Dev Tunnels and port forwarding
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
@@ -26,10 +28,10 @@ const securityHeaders = helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", "https://*.devtunnels.ms", "https://*.vscode.dev"], // Allow Dev Tunnels and VS Code forwarded URLs
       frameSrc: ["'none'"],
       objectSrc: ["'none'"],
-      upgradeInsecureRequests: []
+      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null // Only in production
     }
   },
   // Cross-Origin Resource Policy - COMPLETELY DISABLED

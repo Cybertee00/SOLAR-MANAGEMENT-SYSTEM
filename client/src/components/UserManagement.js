@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getUsers, createUser, updateUser, deleteUser, deactivateUser } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { getApiBaseUrl } from '../api/api';
 import './UserManagement.css';
 
 function UserManagement() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin, user: currentUser } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -14,7 +17,8 @@ function UserManagement() {
     username: '',
     email: '',
     full_name: '',
-    role: 'technician',
+    role: 'technician', // For backward compatibility
+    roles: ['technician'], // Multiple roles
     password: ''
   });
   const [openDropdown, setOpenDropdown] = useState(null); // Track which user's dropdown is open
@@ -54,18 +58,30 @@ function UserManagement() {
       if (editingUser) {
         // Update user
         const updateData = { ...formData };
+        // Use roles array if available, otherwise use single role
+        if (formData.roles && Array.isArray(formData.roles) && formData.roles.length > 0) {
+          updateData.roles = formData.roles;
+          // Keep role for backward compatibility (primary role)
+          updateData.role = formData.roles[0];
+        }
         // Only include password if it's being changed
         if (!updateData.password) {
           delete updateData.password;
         }
         await updateUser(editingUser.id, updateData);
       } else {
-        // Create user
-        if (!formData.password || formData.password.length < 6) {
-          setError('Password is required and must be at least 6 characters long');
-          return;
+        // Create user - password is optional (will use default "witkop123" if not provided)
+        const createData = { ...formData };
+        // Remove password from data if empty (backend will use default)
+        if (!createData.password || createData.password.trim() === '') {
+          delete createData.password;
         }
-        await createUser(formData);
+        // Use roles array if available
+        if (formData.roles && Array.isArray(formData.roles) && formData.roles.length > 0) {
+          createData.roles = formData.roles;
+          createData.role = formData.roles[0]; // Primary role for backward compatibility
+        }
+        await createUser(createData);
       }
 
       // Reset form and reload users
@@ -74,6 +90,7 @@ function UserManagement() {
         email: '',
         full_name: '',
         role: 'technician',
+        roles: ['technician'],
         password: ''
       });
       setEditingUser(null);
@@ -86,11 +103,14 @@ function UserManagement() {
 
   const handleEdit = (user) => {
     setEditingUser(user);
+    // Support both single role and multiple roles
+    const userRoles = user.roles && Array.isArray(user.roles) ? user.roles : [user.role || 'technician'];
     setFormData({
       username: user.username,
       email: user.email,
       full_name: user.full_name,
-      role: user.role,
+      role: userRoles[0] || user.role || 'technician', // Primary role for backward compatibility
+      roles: userRoles, // Multiple roles
       password: '' // Don't pre-fill password
     });
     setShowForm(true);
@@ -98,7 +118,31 @@ function UserManagement() {
 
   const handleProfile = (user) => {
     setOpenDropdown(null);
-    handleEdit(user);
+    // If viewing own profile or admin viewing another user's profile, navigate to profile page
+    if (user.id === currentUser?.id) {
+      navigate('/profile');
+    } else {
+      // For now, show edit form. Could be enhanced to show a view-only profile modal
+      handleEdit(user);
+    }
+  };
+
+  const getProfileImageUrl = (profileImage) => {
+    if (!profileImage) return null;
+    const baseUrl = getApiBaseUrl().replace('/api', '');
+    return `${baseUrl}${profileImage}`;
+  };
+
+  const getInitials = (fullName, username) => {
+    if (fullName) {
+      const parts = fullName.trim().split(' ').filter(p => p);
+      if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+      } else if (parts.length === 1) {
+        return parts[0][0].toUpperCase();
+      }
+    }
+    return username ? username[0].toUpperCase() : 'U';
   };
 
   const handleDeactivate = async (id, username) => {
@@ -182,7 +226,8 @@ function UserManagement() {
               username: '',
               email: '',
               full_name: '',
-              role: 'technician',
+              role: 'technician', // For backward compatibility
+              roles: ['technician'], // Default role for new users
               password: ''
             });
             setShowForm(true);
@@ -240,32 +285,79 @@ function UserManagement() {
 
             <div className="form-row">
               <div className="form-group">
-                <label>Role *</label>
-                <select
-                  name="role"
-                  value={formData.role}
-                  onChange={handleInputChange}
-                  required
-                >
-                  <option value="technician">Technician</option>
-                  <option value="supervisor">Supervisor</option>
-                  <option value="admin">Administrator</option>
-                </select>
+                <label>Roles * {isSuperAdmin() && <small>(Multiple roles allowed)</small>}</label>
+                {isSuperAdmin() ? (
+                  // Multi-select checkboxes for super admin
+                  <div className="roles-checkboxes">
+                    {['technician', 'supervisor', 'admin', 'super_admin'].map(role => (
+                      <label key={role} className="role-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={formData.roles?.includes(role) || false}
+                          onChange={(e) => {
+                            const currentRoles = formData.roles || [];
+                            if (e.target.checked) {
+                              setFormData(prev => ({
+                                ...prev,
+                                roles: [...currentRoles, role],
+                                role: currentRoles.length === 0 ? role : prev.role // Set primary role if first
+                              }));
+                            } else {
+                              setFormData(prev => ({
+                                ...prev,
+                                roles: currentRoles.filter(r => r !== role),
+                                role: currentRoles[0] === role && currentRoles.length > 1 
+                                  ? currentRoles[1] 
+                                  : (currentRoles[0] === role ? 'technician' : prev.role)
+                              }));
+                            }
+                          }}
+                        />
+                        <span>{role.charAt(0).toUpperCase() + role.slice(1).replace('_', ' ')}</span>
+                      </label>
+                    ))}
+                    {(!formData.roles || formData.roles.length === 0) && (
+                      <small className="error-text">At least one role must be selected</small>
+                    )}
+                  </div>
+                ) : (
+                  // Single select for admin
+                  <select
+                    name="role"
+                    value={formData.role}
+                    onChange={(e) => {
+                      setFormData(prev => ({
+                        ...prev,
+                        role: e.target.value,
+                        roles: [e.target.value]
+                      }));
+                    }}
+                    required
+                  >
+                    <option value="technician">Technician</option>
+                    <option value="supervisor">Supervisor</option>
+                    <option value="admin">Administrator</option>
+                  </select>
+                )}
               </div>
 
               <div className="form-group">
                 <label>
-                  Password {editingUser ? '(leave blank to keep current)' : '*'}
+                  Password {editingUser ? '(leave blank to keep current)' : '(optional - defaults to "witkop123")'}
                 </label>
                 <input
                   type="password"
                   name="password"
                   value={formData.password}
                   onChange={handleInputChange}
-                  required={!editingUser}
                   minLength={6}
-                  placeholder={editingUser ? 'Enter new password to change' : 'Minimum 6 characters'}
+                  placeholder={editingUser ? 'Enter new password to change' : 'Leave blank to use default password'}
                 />
+                {!editingUser && (
+                  <small className="form-text text-muted">
+                    If left blank, the default password "witkop123" will be used. User will be prompted to change it on first login.
+                  </small>
+                )}
               </div>
             </div>
 
@@ -290,6 +382,7 @@ function UserManagement() {
             <table className="users-table">
               <thead>
                 <tr>
+                  <th style={{ width: '60px' }}>Photo</th>
                   <th>Username</th>
                   <th>Full Name</th>
                   <th>Email</th>
@@ -302,18 +395,54 @@ function UserManagement() {
               <tbody>
                 {users.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="text-center">No users found</td>
+                    <td colSpan="8" className="text-center">No users found</td>
                   </tr>
                 ) : (
-                  users.map(user => (
+                  users.map(user => {
+                    const profileImageUrl = getProfileImageUrl(user.profile_image);
+                    const initials = getInitials(user.full_name, user.username);
+                    
+                    return (
                     <tr key={user.id} className={!user.is_active ? 'inactive' : ''}>
+                      <td>
+                        <div className="user-avatar-cell">
+                          {profileImageUrl ? (
+                            <img 
+                              src={profileImageUrl} 
+                              alt={user.full_name || user.username}
+                              className="user-avatar"
+                              onError={(e) => {
+                                // Fallback to initials if image fails to load
+                                e.target.style.display = 'none';
+                                e.target.nextSibling.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          <div 
+                            className="user-avatar-placeholder"
+                            style={{ display: profileImageUrl ? 'none' : 'flex' }}
+                          >
+                            {initials}
+                          </div>
+                        </div>
+                      </td>
                       <td>{user.username}</td>
                       <td>{user.full_name}</td>
                       <td>{user.email}</td>
                       <td>
-                        <span className={`badge badge-${user.role}`}>
-                          {user.role}
-                        </span>
+                        {user.roles && Array.isArray(user.roles) && user.roles.length > 1 ? (
+                          <div className="roles-badges">
+                            {user.roles.map((role, idx) => (
+                              <span key={idx} className={`badge badge-${role}`}>
+                                {role}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className={`badge badge-${user.role || user.roles?.[0] || 'technician'}`}>
+                            {user.role || user.roles?.[0] || 'technician'}
+                          </span>
+                        )}
                       </td>
                       <td>
                         <span className={`badge ${user.is_active ? 'badge-success' : 'badge-danger'}`}>
@@ -381,7 +510,7 @@ function UserManagement() {
                                 onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
                                 onMouseLeave={(e) => e.currentTarget.style.background = 'white'}
                               >
-                                Update
+                                {user.id === currentUser?.id ? 'View Profile' : 'Edit User'}
                               </button>
                               <button
                                 className="dropdown-item"
@@ -404,7 +533,7 @@ function UserManagement() {
                               >
                                 Delete
                               </button>
-                              {user.is_active && (
+                              {user.is_active && isSuperAdmin() && (
                                 <button
                                   className="dropdown-item"
                                   onClick={() => handleDeactivate(user.id, user.username)}
@@ -432,7 +561,8 @@ function UserManagement() {
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>

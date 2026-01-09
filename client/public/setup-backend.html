@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backend URL Setup - Port Forwarding</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-top: 0;
+        }
+        .info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2196F3;
+        }
+        .info p {
+            margin: 5px 0;
+            color: #1976D2;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            font-size: 14px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+        }
+        input:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+        button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+        }
+        button:hover {
+            background: #1976D2;
+        }
+        .current-url {
+            margin-top: 20px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            font-size: 12px;
+            word-break: break-all;
+        }
+        .success {
+            background: #4caf50;
+            color: white;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Backend URL Setup</h1>
+        
+        <div class="info">
+            <p><strong>For Port Forwarding:</strong></p>
+            <p>1. Forward port <strong>3001</strong> in VS Code Ports tab</p>
+            <p>2. Copy the forwarded URL (e.g., https://xxxx-xxxx-xxxx.vscode.dev)</p>
+            <p>3. Paste it below and click Save</p>
+        </div>
+
+        <input 
+            type="text" 
+            id="backendUrl" 
+            placeholder="Enter backend forwarded URL (e.g., https://xxxx-xxxx-xxxx.vscode.dev)"
+            autocomplete="off"
+        >
+        
+        <button onclick="saveBackendUrl()">💾 Save & Redirect to App</button>
+
+        <div class="current-url">
+            <strong>Current Frontend URL:</strong><br>
+            <span id="currentUrl"></span>
+        </div>
+
+        <div id="success" class="success">
+            ✅ Backend URL saved! Redirecting...
+        </div>
+    </div>
+
+    <script>
+        // Show current URL
+        document.getElementById('currentUrl').textContent = window.location.origin;
+
+        // Check if backend URL is already set
+        const existingUrl = localStorage.getItem('backendApiUrl');
+        if (existingUrl) {
+            document.getElementById('backendUrl').value = existingUrl;
+        }
+
+        function saveBackendUrl() {
+            const url = document.getElementById('backendUrl').value.trim();
+            
+            if (!url) {
+                alert('Please enter a backend URL');
+                return;
+            }
+
+            // Validate URL format
+            try {
+                new URL(url);
+            } catch (e) {
+                alert('Invalid URL format. Please enter a valid URL (e.g., https://xxxx-xxxx-xxxx.vscode.dev)');
+                return;
+            }
+
+            // Save to localStorage
+            localStorage.setItem('backendApiUrl', url);
+            
+            // Show success message
+            document.getElementById('success').style.display = 'block';
+            
+            // Redirect to app after 1 second
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 1000);
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('backendUrl').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                saveBackendUrl();
+            }
+        });
+    </script>
+</body>
+</html>

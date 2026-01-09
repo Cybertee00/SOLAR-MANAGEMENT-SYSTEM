@@ -23,15 +23,19 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (username, password) => {
+  const login = async (username, password, rememberMe = false) => {
     try {
-      console.log('Attempting login with:', { username });
-      const response = await apiLogin(username, password);
+      console.log('Attempting login with:', { username, rememberMe });
+      const response = await apiLogin(username, password, rememberMe);
       console.log('Login response:', response.data);
       
       if (response.data && response.data.user) {
         setUser(response.data.user);
-        return { success: true, user: response.data.user };
+        return { 
+          success: true, 
+          user: response.data.user,
+          requires_password_change: response.data.requires_password_change || false
+        };
       } else {
         console.error('Unexpected login response format:', response.data);
         return { 
@@ -42,9 +46,21 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Login error:', error);
       console.error('Error response:', error.response?.data);
+      
+      // Handle ACCESS RESTRICTED error with admin email
+      if (error.response?.status === 403 && error.response?.data?.error === 'ACCESS RESTRICTED') {
+        return {
+          success: false,
+          error: 'ACCESS RESTRICTED',
+          admin_email: error.response.data.admin_email || 'the administrator',
+          message: error.response.data.message
+        };
+      }
+      
       return { 
         success: false, 
-        error: error.response?.data?.error || error.message || 'Login failed' 
+        error: error.response?.data?.error || error.message || 'Login failed',
+        admin_email: error.response?.data?.admin_email
       };
     }
   };
@@ -59,8 +75,32 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const isAdmin = () => user && user.role === 'admin';
-  const isSupervisor = () => user && (user.role === 'admin' || user.role === 'supervisor');
+  // Support both single role (backward compatibility) and multiple roles
+  const getUserRoles = () => {
+    if (!user) return [];
+    if (user.roles && Array.isArray(user.roles)) {
+      return user.roles;
+    }
+    if (user.role) {
+      return [user.role];
+    }
+    return [];
+  };
+
+  const hasRole = (role) => {
+    const roles = getUserRoles();
+    return roles.includes(role);
+  };
+
+  const hasAnyRole = (...roles) => {
+    const userRoles = getUserRoles();
+    return roles.some(role => userRoles.includes(role));
+  };
+
+  const isAdmin = () => hasAnyRole('admin', 'super_admin');
+  const isSuperAdmin = () => hasRole('super_admin');
+  const isSupervisor = () => hasAnyRole('admin', 'super_admin', 'supervisor');
+  const isTechnician = () => hasRole('technician');
   const isAuthenticated = () => !!user;
 
   return (
@@ -71,7 +111,12 @@ export const AuthProvider = ({ children }) => {
       logout,
       checkAuth,
       isAdmin,
+      isSuperAdmin,
       isSupervisor,
+      isTechnician,
+      hasRole,
+      hasAnyRole,
+      getUserRoles,
       isAuthenticated
     }}>
       {children}

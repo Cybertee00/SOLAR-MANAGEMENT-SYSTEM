@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { getUnreadNotificationCount } from './api/api';
 import Dashboard from './components/Dashboard';
 import Tasks from './components/Tasks';
 import TaskDetail from './components/TaskDetail';
@@ -11,7 +12,11 @@ import ChecklistTemplates from './components/ChecklistTemplates';
 import Inventory from './components/Inventory';
 import Login from './components/Login';
 import UserManagement from './components/UserManagement';
+import SpareRequests from './components/SpareRequests';
+import Profile from './components/Profile';
+import Notifications from './components/Notifications';
 import ProtectedRoute from './components/ProtectedRoute';
+import PasswordChangeModal from './components/PasswordChangeModal';
 import './App.css';
 
 function App() {
@@ -27,9 +32,29 @@ function App() {
 }
 
 function AppContent() {
+  const { user } = useAuth();
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+
+  // Check if user needs to change password on mount or when user changes
+  useEffect(() => {
+    if (user && user.password_changed === false) {
+      setShowPasswordModal(true);
+    }
+  }, [user]);
+
+  const handlePasswordChangeSuccess = () => {
+    // Refresh user data to update password_changed flag
+    window.location.reload();
+  };
+
   return (
     <>
       <Header />
+      <PasswordChangeModal
+        isOpen={showPasswordModal}
+        onClose={() => setShowPasswordModal(false)}
+        onSuccess={handlePasswordChangeSuccess}
+      />
       <div className="container">
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -68,7 +93,7 @@ function AppContent() {
           <Route 
             path="/assets" 
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requireAdmin={true}>
                 <Assets />
               </ProtectedRoute>
             } 
@@ -76,7 +101,7 @@ function AppContent() {
           <Route 
             path="/checklist-templates" 
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requireAdmin={true}>
                 <ChecklistTemplates />
               </ProtectedRoute>
             } 
@@ -98,10 +123,34 @@ function AppContent() {
             }
           />
           <Route 
+            path="/spare-requests" 
+            element={
+              <ProtectedRoute>
+                <SpareRequests />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
             path="/users" 
             element={
               <ProtectedRoute requireAdmin={true}>
                 <UserManagement />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/profile" 
+            element={
+              <ProtectedRoute>
+                <Profile />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/notifications" 
+            element={
+              <ProtectedRoute>
+                <Notifications />
               </ProtectedRoute>
             } 
           />
@@ -111,10 +160,59 @@ function AppContent() {
   );
 }
 
+function NotificationBadge() {
+  const [unreadCount, setUnreadCount] = useState(0);
+  const location = useLocation();
+
+  useEffect(() => {
+    loadCount();
+    const interval = setInterval(loadCount, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadCount = async () => {
+    try {
+      const response = await getUnreadNotificationCount();
+      setUnreadCount(response.data.count);
+    } catch (error) {
+      console.error('Error loading notification count:', error);
+    }
+  };
+
+  return (
+    <Link 
+      to="/notifications" 
+      className={location.pathname === '/notifications' ? 'active' : ''}
+      style={{ position: 'relative', display: 'inline-block' }}
+    >
+      Notifications
+      {unreadCount > 0 && (
+        <span style={{
+          position: 'absolute',
+          top: '-8px',
+          right: '-8px',
+          background: '#dc3545',
+          color: 'white',
+          borderRadius: '50%',
+          width: '20px',
+          height: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '11px',
+          fontWeight: 'bold'
+        }}>
+          {unreadCount > 9 ? '9+' : unreadCount}
+        </span>
+      )}
+    </Link>
+  );
+}
+
 function Header() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isSuperAdmin, isTechnician, getUserRoles } = useAuth();
 
   const handleLogout = async () => {
     await logout();
@@ -125,13 +223,17 @@ function Header() {
     return null; // Don't show header on login page
   }
 
+  // Get user roles for display
+  const userRoles = getUserRoles();
+  const rolesDisplay = userRoles.length > 0 ? userRoles.join(', ') : (user.role || 'technician');
+
   return (
     <div className="header">
       <div className="header-top">
         <h1>O&M Management System</h1>
         <div className="header-user">
           <span className="user-name">{user.full_name || user.username}</span>
-          <span className="user-role">({user.role})</span>
+          <span className="user-role">({rolesDisplay})</span>
           <button className="btn btn-sm btn-secondary header-logout" onClick={handleLogout}>
             Logout
           </button>
@@ -144,12 +246,16 @@ function Header() {
         <Link to="/tasks" className={location.pathname.startsWith('/tasks') ? 'active' : ''}>
           Tasks
         </Link>
-        <Link to="/assets" className={location.pathname === '/assets' ? 'active' : ''}>
-          Assets
-        </Link>
-        <Link to="/checklist-templates" className={location.pathname === '/checklist-templates' ? 'active' : ''}>
-          Templates
-        </Link>
+        {!isTechnician() && (
+          <Link to="/assets" className={location.pathname === '/assets' ? 'active' : ''}>
+            Assets
+          </Link>
+        )}
+        {!isTechnician() && (
+          <Link to="/checklist-templates" className={location.pathname === '/checklist-templates' ? 'active' : ''}>
+            Templates
+          </Link>
+        )}
         <Link to="/cm-letters" className={location.pathname === '/cm-letters' ? 'active' : ''}>
           CM Letters
         </Link>
@@ -157,10 +263,19 @@ function Header() {
           Inventory
         </Link>
         {isAdmin() && (
+          <Link to="/spare-requests" className={location.pathname === '/spare-requests' ? 'active' : ''}>
+            Spare Requests
+          </Link>
+        )}
+        {isAdmin() && (
           <Link to="/users" className={location.pathname === '/users' ? 'active' : ''}>
             Users
           </Link>
         )}
+        <Link to="/profile" className={location.pathname === '/profile' ? 'active' : ''}>
+          Profile
+        </Link>
+        <NotificationBadge />
       </nav>
     </div>
   );

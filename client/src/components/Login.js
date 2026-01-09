@@ -6,6 +6,7 @@ import './Login.css';
 function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login, isAuthenticated } = useAuth();
@@ -15,6 +16,13 @@ function Login() {
     // If already authenticated, redirect to dashboard
     if (isAuthenticated()) {
       navigate('/');
+    }
+    
+    // Load remembered username from localStorage
+    const rememberedUsername = localStorage.getItem('remembered_username');
+    if (rememberedUsername) {
+      setUsername(rememberedUsername);
+      setRememberMe(true);
     }
   }, [isAuthenticated, navigate]);
 
@@ -33,13 +41,24 @@ function Login() {
 
     try {
       console.log('Submitting login form...');
-      const result = await login(normalizedUsername, password);
+      const result = await login(normalizedUsername, password, rememberMe);
       console.log('Login result:', result);
 
       if (result.success) {
+        // Save username if remember me is checked
+        if (rememberMe) {
+          localStorage.setItem('remembered_username', normalizedUsername);
+        } else {
+          localStorage.removeItem('remembered_username');
+        }
         navigate('/');
       } else {
-        setError(result.error || 'Login failed. Please check your credentials.');
+        // Handle special error messages (e.g., ACCESS RESTRICTED)
+        if (result.error === 'ACCESS RESTRICTED' && result.admin_email) {
+          setError(`ACCESS RESTRICTED\n\nYour account access has been restricted. Please contact the administrator at ${result.admin_email} for assistance.`);
+        } else {
+          setError(result.error || 'Login failed. Please check your credentials.');
+        }
       }
     } catch (err) {
       console.error('Login error caught:', err);
@@ -55,17 +74,34 @@ function Login() {
     }
   };
 
+  const handleForgotPassword = () => {
+    // For now, show a message. This can be expanded to a forgot password flow later
+    alert('Please contact your administrator to reset your password.');
+  };
+
   return (
     <div className="login-container">
       <div className="login-box">
         <div className="login-header">
+          <div className="login-logo">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
           <h1>Solar O&M Maintenance</h1>
           <p>Sign in to your account</p>
         </div>
 
         {error && (
-          <div className="alert alert-error">
-            {error}
+          <div className={`alert ${error.includes('ACCESS RESTRICTED') ? 'alert-restricted' : 'alert-error'}`}>
+            {error.split('\n').map((line, idx) => (
+              <React.Fragment key={idx}>
+                {line}
+                {idx < error.split('\n').length - 1 && <br />}
+              </React.Fragment>
+            ))}
           </div>
         )}
 
@@ -81,6 +117,7 @@ function Login() {
               autoComplete="username"
               disabled={loading}
               required
+              autoFocus
             />
           </div>
 
@@ -98,20 +135,45 @@ function Login() {
             />
           </div>
 
+          <div className="login-options">
+            <label className="remember-me">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                disabled={loading}
+              />
+              <span>Remember me</span>
+            </label>
+            <button
+              type="button"
+              className="forgot-password-link"
+              onClick={handleForgotPassword}
+              disabled={loading}
+            >
+              Forgot password?
+            </button>
+          </div>
+
           <button 
             type="submit" 
             className="btn btn-primary btn-block"
             disabled={loading}
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? (
+              <>
+                <span className="spinner"></span>
+                Signing in...
+              </>
+            ) : (
+              'Sign In'
+            )}
           </button>
         </form>
 
         <div className="login-footer">
           <p className="text-muted">
-            Default credentials:<br />
-            Admin: <strong>admin</strong> / <strong>tech1</strong><br />
-            Technician: <strong>tech1</strong> / <strong>tech123</strong>
+            Need help? Contact your system administrator
           </p>
         </div>
       </div>
@@ -120,4 +182,3 @@ function Login() {
 }
 
 export default Login;
-

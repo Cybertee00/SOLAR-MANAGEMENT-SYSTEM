@@ -3,6 +3,8 @@ const { body } = require('express-validator');
 const { validateChecklistResponse } = require('../utils/validation');
 const { v4: uuidv4 } = require('uuid');
 const { validateUUID, validateJSONB, validateString, validateDateTime, handleValidationErrors, removeUnexpectedFields } = require('../middleware/inputValidation');
+const { isTechnician, requireAuth } = require('../middleware/auth');
+const { notifyTaskFlagged } = require('../utils/notifications');
 
 module.exports = (pool) => {
   const router = express.Router();
@@ -99,6 +101,7 @@ module.exports = (pool) => {
         approved_by,
         images,
         spares_used,
+        hours_worked,
         cm_occurred_at,
         started_at,
         completed_at
@@ -119,6 +122,31 @@ module.exports = (pool) => {
       }
 
       const template = templateResult.rows[0];
+      const task = taskResult.rows[0];
+
+      // Check if user is assigned to this task (admins/super_admins can submit any task)
+      const role = req.session?.role;
+      const isAdminOrSuperAdmin = role === 'admin' || role === 'super_admin';
+      
+      if (!isAdminOrSuperAdmin) {
+        const assignmentCheck = await pool.query(
+          `SELECT 1 FROM task_assignments WHERE task_id = $1 AND user_id = $2`,
+          [task_id, req.session.userId]
+        );
+        
+        if (assignmentCheck.rows.length === 0) {
+          return res.status(403).json({ 
+            error: 'You can only submit checklists for tasks assigned to you.' 
+          });
+        }
+      }
+
+      // Technicians cannot use spares directly in PM tasks - they must request them
+      if (isTechnician(req) && task.task_type === 'PM' && spares_used && Array.isArray(spares_used) && spares_used.length > 0) {
+        return res.status(403).json({ 
+          error: 'Technicians cannot directly use spares in PM tasks. Please use spare requests instead.' 
+        });
+      }
 
       // Parse JSONB fields if they're strings
       let checklistStructure = template.checklist_structure;
@@ -266,12 +294,18 @@ module.exports = (pool) => {
       }
       // Update task status and overall status
       // For Unplanned CM tasks, include time fields if provided
-      const task = taskResult.rows[0];
+      // Note: 'task' variable is already declared above at line 123
       let taskUpdateQuery = `UPDATE tasks 
          SET overall_status = $1, 
              status = 'completed'`;
       let taskUpdateParams = [overallStatus];
       let paramCount = 2;
+      
+      // Update hours_worked if provided
+      if (hours_worked !== undefined && hours_worked !== null) {
+        taskUpdateQuery += `, hours_worked = $${paramCount++}`;
+        taskUpdateParams.push(parseFloat(hours_worked) || 0);
+      }
 
       // For UCM tasks, update time fields
       if (task.task_type === 'UCM') {
@@ -403,12 +437,12 @@ module.exports = (pool) => {
               
               const taskCode = `CM-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
               
-              // Create CM task
+              // Create CM task (use PCM as task type, not CM)
               const cmTaskResult = await pool.query(
                 `INSERT INTO tasks (
                   task_code, checklist_template_id, asset_id, task_type, 
                   status, parent_task_id, scheduled_date
-                ) VALUES ($1, $2, $3, 'CM', 'pending', $4, CURRENT_DATE) RETURNING *`,
+                ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE) RETURNING *`,
                 [taskCode, cmTemplateId, updatedTask.asset_id, task_id]
               );
               

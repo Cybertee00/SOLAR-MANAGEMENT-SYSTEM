@@ -2,7 +2,8 @@ const express = require('express');
 const { body } = require('express-validator');
 const { requireAdmin } = require('../middleware/auth');
 const { validateUUID, validateString, handleValidationErrors, removeUnexpectedFields } = require('../middleware/inputValidation');
-const { sensitiveOperationLimiter } = require('../middleware/rateLimiter');
+// Rate limiting removed for frequent use
+// const { sensitiveOperationLimiter } = require('../middleware/rateLimiter');
 
 module.exports = (pool) => {
   const router = express.Router();
@@ -23,7 +24,8 @@ module.exports = (pool) => {
 
   // Create webhook (admin only)
   // Body: { name, url, events: string[], secret? }
-  router.post('/', requireAdmin, sensitiveOperationLimiter, [
+  // Rate limiting removed for frequent use
+  router.post('/', requireAdmin, [
     removeUnexpectedFields(['name', 'url', 'events', 'secret']),
     validateString('name', 255, true),
     body('url')

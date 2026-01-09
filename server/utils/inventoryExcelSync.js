@@ -174,10 +174,107 @@ async function updateActualQtyInExcel(updatesByItemCode, filePath = DEFAULT_INVE
   return { updated: Object.keys(updatesByItemCode || {}).length, filePath: fullPath };
 }
 
+/**
+ * Export inventory to Excel using the existing template structure.
+ * Reads the template, updates it with current database values, and returns the workbook buffer.
+ * Preserves the template's formatting and structure while updating data.
+ */
+async function exportInventoryToExcel(pool, filePath = DEFAULT_INVENTORY_XLSX) {
+  console.log('[EXPORT] Starting inventory export to Excel');
+  console.log('[EXPORT] Template file path:', filePath);
+  
+  try {
+    // Load the existing template
+    const { workbook, worksheet, fullPath } = await loadInventoryWorkbook(filePath);
+    console.log('[EXPORT] Template loaded successfully');
+    const { headerRow, colMap } = findHeaderRowAndColumns(worksheet);
+    console.log('[EXPORT] Header row:', headerRow, 'Column map:', colMap);
+    
+    const colSection = colMap['section'] || 1;
+    const colCode = colMap['item code'] || 2;
+    const colDesc = colMap['item description'] || 3;
+    const colPartType = colMap['part type'] || 4;
+    const colMin = colMap['minlevel'] || 5;
+    const colActual = colMap['actual qty'] || 6;
+
+    // Get all inventory items from database
+    console.log('[EXPORT] Fetching inventory items from database...');
+    const result = await pool.query(`
+      SELECT section, item_code, item_description, part_type, min_level, actual_qty
+      FROM inventory_items
+      ORDER BY section NULLS LAST, item_code
+    `);
+    console.log('[EXPORT] Found', result.rows.length, 'inventory items in database');
+
+    // Build a map of item_code -> database row for quick lookup
+    const dbItemsByCode = new Map();
+    result.rows.forEach(item => {
+      dbItemsByCode.set(item.item_code, item);
+    });
+
+    // Track which items from database were found in template
+    const foundInTemplate = new Set();
+
+    // Update existing rows in the template that match database items
+    for (let r = headerRow + 1; r <= worksheet.rowCount; r++) {
+      const row = worksheet.getRow(r);
+      const code = cellText(row.getCell(colCode).value).trim();
+      
+      if (code) {
+        // If this item exists in database, update the row with current values
+        const dbItem = dbItemsByCode.get(code);
+        if (dbItem) {
+          foundInTemplate.add(code);
+          
+          // Update section (handle the "Section | Number" format - extract just the section name)
+          const sectionValue = dbItem.section || '';
+          const sectionParts = sectionValue.split(' | ');
+          const sectionMain = sectionParts[0] || '';
+          // Preserve existing cell formatting if any
+          const sectionCell = row.getCell(colSection);
+          sectionCell.value = sectionMain;
+          
+          // Update item code (should already match, but ensure it's correct)
+          row.getCell(colCode).value = dbItem.item_code;
+          
+          // Update description
+          row.getCell(colDesc).value = dbItem.item_description || '';
+          
+          // Update part type
+          row.getCell(colPartType).value = dbItem.part_type || '';
+          
+          // Update min level (ensure it's a number)
+          const minCell = row.getCell(colMin);
+          minCell.value = Number(dbItem.min_level) || 0;
+          
+          // Update actual qty (ensure it's a number) - this is the most important update
+          const actualCell = row.getCell(colActual);
+          actualCell.value = Number(dbItem.actual_qty) || 0;
+        }
+      }
+    }
+
+    // Note: Items in database but not in template are not added to preserve template structure
+    // This ensures the downloaded file matches the original template format
+    console.log('[EXPORT] Updated', foundInTemplate.size, 'items in template');
+
+    // Generate Excel buffer
+    console.log('[EXPORT] Generating Excel buffer...');
+    const buffer = await workbook.xlsx.writeBuffer();
+    console.log('[EXPORT] Excel buffer generated, size:', buffer.length, 'bytes');
+    return buffer;
+  } catch (error) {
+    console.error('[EXPORT] Error in exportInventoryToExcel:', error);
+    console.error('[EXPORT] Error stack:', error.stack);
+    throw error;
+  }
+}
+
 module.exports = {
   DEFAULT_INVENTORY_XLSX,
   parseInventoryFromExcel,
-  updateActualQtyInExcel
+  updateActualQtyInExcel,
+  exportInventoryToExcel
 };
 
 

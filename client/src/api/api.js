@@ -4,17 +4,73 @@ import axios from 'axios';
 // If REACT_APP_API_URL is set, use it
 // Otherwise, detect if we're on mobile and use the current hostname
 export function getApiBaseUrl() {
-  // For mobile/network access, use the current hostname with port 3001.
-  // This works for both USB (localhost via ADB) and Wi‑Fi (IP address).
-  //
-  // IMPORTANT (sessions): cookies are scoped to a host. If the frontend runs on
-  // http://localhost:3000 but the API is set to http://192.168.x.x:3001, many
-  // browsers will NOT send the session cookie, causing "Authentication required".
-  // So we prefer an API base URL whose hostname matches the current page hostname.
   const hostname = window.location.hostname;
   const protocol = window.location.protocol;
-  const detectedUrl = `${protocol}//${hostname}:3001/api`;
+  
+  // Priority 1: Check for explicit API URL in query parameter (for port forwarding)
+  const urlParams = new URLSearchParams(window.location.search);
+  const apiUrlParam = urlParams.get('apiUrl');
+  if (apiUrlParam) {
+    try {
+      const parsed = new URL(apiUrlParam);
+      console.log('Using API URL from query parameter:', parsed.origin + '/api');
+      return parsed.origin + '/api';
+    } catch (e) {
+      console.warn('Invalid apiUrl parameter, ignoring:', apiUrlParam);
+    }
+  }
 
+  // Priority 2: Auto-detect port forwarding URLs (before checking env/localStorage)
+  // These services create different URLs for each port, so we need manual configuration
+  // But we can detect the service and provide helpful guidance
+  
+  // Dev Tunnels: https://xxxx-3000.region.devtunnels.ms/ -> https://xxxx-3001.region.devtunnels.ms/
+  if (hostname.includes('devtunnels.ms')) {
+    const backendHostname = hostname.replace(/-3000\./, '-3001.');
+    const detectedUrl = `${protocol}//${backendHostname}/api`;
+    console.log('Dev Tunnels URL detected. Auto-detected backend API URL:', detectedUrl);
+    return detectedUrl;
+  }
+  
+  // ngrok: Different subdomains for each port, need manual config
+  // But we can detect it and show a helpful message
+  if (hostname.includes('ngrok') || hostname.includes('ngrok-free.app') || hostname.includes('ngrok.io')) {
+    console.log('ngrok URL detected. Backend URL must be configured manually via setup page or URL parameter.');
+    // Fall through to check localStorage/query params
+  }
+  
+  // Cloudflare Tunnel: Different subdomains for each port
+  if (hostname.includes('trycloudflare.com') || hostname.includes('cfargotunnel.com')) {
+    console.log('Cloudflare Tunnel URL detected. Backend URL must be configured manually via setup page or URL parameter.');
+    // Fall through to check localStorage/query params
+  }
+  
+  // localhost.run: Different subdomains for each port
+  if (hostname.includes('localhost.run')) {
+    console.log('localhost.run URL detected. Backend URL must be configured manually via setup page or URL parameter.');
+    // Fall through to check localStorage/query params
+  }
+  
+  // localtunnel: Different subdomains for each port
+  if (hostname.includes('loca.lt')) {
+    console.log('localtunnel URL detected. Backend URL must be configured manually via setup page or URL parameter.');
+    // Fall through to check localStorage/query params
+  }
+
+  // Priority 3: Check localStorage for stored backend URL (for port forwarding)
+  const storedApiUrl = localStorage.getItem('backendApiUrl');
+  if (storedApiUrl) {
+    try {
+      const parsed = new URL(storedApiUrl);
+      console.log('Using stored backend API URL:', parsed.origin + '/api');
+      return parsed.origin + '/api';
+    } catch (e) {
+      console.warn('Invalid stored API URL, clearing:', storedApiUrl);
+      localStorage.removeItem('backendApiUrl');
+    }
+  }
+
+  // Priority 4: Check environment variable (only if hostname matches or not on port forwarding)
   const envUrl = process.env.REACT_APP_API_URL;
   if (envUrl) {
     try {
@@ -24,18 +80,36 @@ export function getApiBaseUrl() {
         return envUrl;
       }
 
-      console.warn(
+      // If hostname doesn't match, it's likely a port forwarding scenario
+      // Don't use the env URL to avoid cookie issues
+      console.log(
         'REACT_APP_API_URL hostname does not match current page hostname; using auto-detected API URL for session cookies.',
-        { envUrl, pageHost: hostname, detectedUrl }
+        { envUrl, pageHost: hostname }
       );
-      return detectedUrl;
     } catch (e) {
-      // If env URL can't be parsed, fall back to it as-is (better than crashing).
       console.warn('Invalid REACT_APP_API_URL; using it as-is:', envUrl, e);
       return envUrl;
     }
   }
+  
+  // Priority 5: Auto-detect based on current location
+  // Check if we're on a VS Code forwarded URL (vscode.dev, codespaces, etc.)
+  const isVSCodeForwarded = hostname.includes('vscode.dev') || 
+                            hostname.includes('github.dev') ||
+                            hostname.includes('codespaces');
+  
+  if (isVSCodeForwarded) {
+    // For VS Code port forwarding, we need the backend forwarded URL
+    // This should be provided via query parameter or localStorage
+    // Fallback: try to use the same hostname with port 3001 (may not work)
+    const detectedUrl = `${protocol}//${hostname}:3001/api`;
+    console.warn('VS Code forwarded URL detected. Backend URL should be provided via ?apiUrl= parameter or localStorage.');
+    console.log('Attempting auto-detected API URL (may not work):', detectedUrl);
+    return detectedUrl;
+  }
 
+  // Priority 6: Standard localhost or network access
+  const detectedUrl = `${protocol}//${hostname}:3001/api`;
   console.log('Auto-detected API URL:', detectedUrl);
   console.log('Current location:', window.location.href);
   return detectedUrl;
@@ -90,7 +164,8 @@ api.interceptors.response.use(
 );
 
 // Authentication
-export const login = (username, password) => api.post('/auth/login', { username, password });
+export const login = (username, password, rememberMe = false) => 
+  api.post('/auth/login', { username, password, remember_me: rememberMe });
 export const logout = () => api.post('/auth/logout');
 export const getCurrentUser = () => api.get('/auth/me');
 export const changePassword = (currentPassword, newPassword) => 
@@ -158,11 +233,116 @@ export const updateCMLetterStatus = (id, data) => api.patch(`/cm-letters/${id}/s
 // Inventory
 export const getInventoryItems = (params) => api.get('/inventory/items', { params });
 export const importInventoryFromExcel = () => api.post('/inventory/import');
+export const downloadInventoryExcel = async () => {
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl}/inventory/download`;
+  
+  console.log('[DOWNLOAD] Starting inventory download from:', url);
+  
+  try {
+    // Use fetch with credentials to ensure cookies are sent
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include', // Include cookies for authentication
+      headers: {
+        'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }
+    });
+
+    console.log('[DOWNLOAD] Response status:', response.status, response.statusText);
+    console.log('[DOWNLOAD] Response headers:', Object.fromEntries(response.headers.entries()));
+
+    if (!response.ok) {
+      let errorData;
+      try {
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          errorData = await response.json();
+        } else {
+          const text = await response.text();
+          console.error('[DOWNLOAD] Error response text:', text);
+          errorData = { error: text || 'Failed to download inventory' };
+        }
+      } catch (parseError) {
+        console.error('[DOWNLOAD] Error parsing error response:', parseError);
+        errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
+      }
+      console.error('[DOWNLOAD] Error data:', errorData);
+      throw new Error(errorData.error || errorData.details || 'Failed to download inventory');
+    }
+
+    // Get the blob from response
+    console.log('[DOWNLOAD] Reading response as blob...');
+    const blob = await response.blob();
+    console.log('[DOWNLOAD] Blob created, size:', blob.size, 'bytes, type:', blob.type);
+    
+    if (blob.size === 0) {
+      throw new Error('Downloaded file is empty');
+    }
+    
+    // Create a temporary link and trigger download
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `Inventory_Count_${new Date().toISOString().split('T')[0]}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Clean up the object URL
+    window.URL.revokeObjectURL(downloadUrl);
+    
+    console.log('[DOWNLOAD] Download triggered successfully');
+    return Promise.resolve();
+  } catch (error) {
+    console.error('[DOWNLOAD] Error downloading inventory Excel:', error);
+    console.error('[DOWNLOAD] Error message:', error.message);
+    console.error('[DOWNLOAD] Error stack:', error.stack);
+    throw error;
+  }
+};
 export const adjustInventory = (data) => api.post('/inventory/adjust', data);
 export const consumeInventory = (data) => api.post('/inventory/consume', data);
 export const getInventorySlips = () => api.get('/inventory/slips');
 export const getInventorySlip = (id) => api.get(`/inventory/slips/${id}`);
 export const getSparesUsage = (params) => api.get('/inventory/usage', { params });
+
+// Spare Requests API
+export const getSpareRequests = (params) => api.get('/spare-requests', { params });
+export const getSpareRequest = (id) => api.get(`/spare-requests/${id}`);
+export const createSpareRequest = (data) => api.post('/spare-requests', data);
+export const approveSpareRequest = (id, data) => api.post(`/spare-requests/${id}/approve`, data);
+export const rejectSpareRequest = (id, data) => api.post(`/spare-requests/${id}/reject`, data);
+export const fulfillSpareRequest = (id) => api.post(`/spare-requests/${id}/fulfill`);
+
+// Task Locking API
+export const lockTask = (id, data) => api.patch(`/tasks/${id}/lock`, data);
+export const unlockTask = (id) => api.patch(`/tasks/${id}/unlock`);
+export const updateTask = (id, data) => api.put(`/tasks/${id}`, data);
+
+// Profile API
+export const getProfile = () => api.get('/users/profile/me');
+export const updateProfile = (data) => api.put('/users/profile/me', data);
+export const uploadProfileImage = (file) => {
+  const formData = new FormData();
+  formData.append('image', file);
+  // Don't set Content-Type header - let the browser set it automatically with the boundary
+  return api.post('/users/profile/me/avatar', formData);
+};
+
+// Early Completion Requests API
+export const getEarlyCompletionRequests = (taskId) => api.get(`/early-completion-requests/task/${taskId}`);
+export const getPendingEarlyCompletionRequests = () => api.get('/early-completion-requests/pending');
+export const createEarlyCompletionRequest = (data) => api.post('/early-completion-requests', data);
+export const approveEarlyCompletionRequest = (id) => api.post(`/early-completion-requests/${id}/approve`);
+export const rejectEarlyCompletionRequest = (id, data) => api.post(`/early-completion-requests/${id}/reject`, data);
+
+// Notifications API
+export const getNotifications = (params) => api.get('/notifications', { params });
+export const getUnreadNotificationCount = () => api.get('/notifications/unread-count');
+export const markNotificationAsRead = (id) => api.patch(`/notifications/${id}/read`);
+export const markAllNotificationsAsRead = () => api.patch('/notifications/read-all');
+export const deleteNotification = (id) => api.delete(`/notifications/${id}`);
 
 export default api;
 

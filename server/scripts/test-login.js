@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: './server/.env' });
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 
@@ -12,71 +12,77 @@ const pool = new Pool({
 
 async function testLogin() {
   try {
-    console.log('Testing login for admin user...\n');
+    console.log('Testing login for superadmin...\n');
     
-    // Get admin user
-    const result = await pool.query(
-      'SELECT id, username, email, role, password_hash, is_active FROM users WHERE username = $1',
-      ['admin']
-    );
+    // Check if user exists
+    const userResult = await pool.query(`
+      SELECT id, username, email, full_name, role, is_active, 
+             password_hash IS NOT NULL as has_password
+      FROM users 
+      WHERE username = $1 OR email = $1
+    `, ['superadmin']);
     
-    if (result.rows.length === 0) {
-      console.log('❌ Admin user not found!');
-      process.exit(1);
+    if (userResult.rows.length === 0) {
+      console.log('✗ User "superadmin" not found');
+      await pool.end();
+      return;
     }
     
-    const user = result.rows[0];
-    console.log('User found:');
-    console.log('  ID:', user.id);
-    console.log('  Username:', user.username);
-    console.log('  Email:', user.email);
-    console.log('  Role:', user.role);
-    console.log('  Is Active:', user.is_active);
-    console.log('  Has Password:', !!user.password_hash);
-    console.log('');
+    const user = userResult.rows[0];
+    console.log('✓ User found:');
+    console.log(`  Username: ${user.username}`);
+    console.log(`  Role: ${user.role}`);
+    console.log(`  Is Active: ${user.is_active}`);
+    console.log(`  Has Password: ${user.has_password}`);
     
-    // Test password "tech1"
-    const testPassword = 'tech1';
-    console.log(`Testing password: "${testPassword}"`);
-    
-    if (!user.password_hash) {
-      console.log('❌ User has no password hash!');
-      process.exit(1);
+    if (!user.is_active) {
+      console.log('\n✗ User account is deactivated');
+      await pool.end();
+      return;
     }
     
-    const passwordMatch = await bcrypt.compare(testPassword, user.password_hash);
-    console.log('Password match:', passwordMatch ? '✅ YES' : '❌ NO');
-    
-    if (passwordMatch) {
-      console.log('\n✅ Login should work with:');
-      console.log('   Username: admin');
-      console.log('   Password: tech1');
-    } else {
-      console.log('\n❌ Password does not match!');
-      console.log('   The password hash in the database does not match "tech1"');
-      console.log('\n   Updating password now...');
-      
-      const saltRounds = 10;
-      const newPasswordHash = await bcrypt.hash(testPassword, saltRounds);
-      
-      await pool.query(
-        'UPDATE users SET password_hash = $1 WHERE username = $2',
-        [newPasswordHash, 'admin']
-      );
-      
-      console.log('✅ Password updated!');
-      
-      // Test again
-      const newMatch = await bcrypt.compare(testPassword, newPasswordHash);
-      console.log('   Verification:', newMatch ? '✅ Password works!' : '❌ Still not working');
+    if (!user.has_password) {
+      console.log('\n✗ User has no password set');
+      await pool.end();
+      return;
     }
     
-    process.exit(0);
+    // Get actual password_hash
+    const hashResult = await pool.query(`
+      SELECT password_hash FROM users WHERE username = $1
+    `, ['superadmin']);
+    
+    const actualHash = hashResult.rows[0]?.password_hash;
+    console.log(`\nPassword hash: ${actualHash ? actualHash.substring(0, 30) + '...' : 'NULL'}`);
+    
+    if (!actualHash) {
+      console.log('\n✗ Password hash is NULL - need to set password');
+      await pool.end();
+      return;
+    }
+    
+    // Test password
+    const testPassword = '0000';
+    try {
+      const passwordMatch = await bcrypt.compare(testPassword, actualHash);
+      console.log(`\nPassword test ("${testPassword}"): ${passwordMatch ? '✓ MATCH' : '✗ NO MATCH'}`);
+      
+      if (passwordMatch) {
+        console.log('\n✓ Login should work!');
+      } else {
+        console.log('\n✗ Password does not match');
+      }
+    } catch (error) {
+      console.log(`\n✗ Error comparing password: ${error.message}`);
+    }
+    
+    await pool.end();
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
+    await pool.end();
     process.exit(1);
   }
 }
 
 testLogin();
-

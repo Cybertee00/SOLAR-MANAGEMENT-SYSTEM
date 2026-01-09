@@ -4,7 +4,8 @@ const bcrypt = require('bcrypt');
 const { body } = require('express-validator');
 const { requireAdmin } = require('../middleware/auth');
 const { validateString, validateUUID, handleValidationErrors, removeUnexpectedFields } = require('../middleware/inputValidation');
-const { sensitiveOperationLimiter } = require('../middleware/rateLimiter');
+// Rate limiting removed for frequent use
+// const { sensitiveOperationLimiter } = require('../middleware/rateLimiter');
 
 function generateSecret() {
   return crypto.randomBytes(32).toString('hex');
@@ -31,7 +32,8 @@ module.exports = (pool) => {
   // Body: { name, role, user_id }
   // Returns: { token: "tok_<id>_<secret>" } ONLY ONCE.
   // Rate limiting and validation applied
-  router.post('/', requireAdmin, sensitiveOperationLimiter, [
+  // Rate limiting removed for frequent use
+  router.post('/', requireAdmin, [
     removeUnexpectedFields(['name', 'role', 'user_id']),
     validateString('name', 255, true),
     body('role').optional().isIn(['admin', 'supervisor', 'technician']).withMessage('Role must be one of: admin, supervisor, technician'),

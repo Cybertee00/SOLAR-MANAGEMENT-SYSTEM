@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getInventoryItems, adjustInventory, importInventoryFromExcel, getSparesUsage } from '../api/api';
+import { getInventoryItems, adjustInventory, downloadInventoryExcel, getSparesUsage } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 
 function Inventory() {
@@ -66,19 +66,18 @@ function Inventory() {
     return Array.from(map.entries()).map(([section, sectionItems]) => ({ section, items: sectionItems }));
   }, [items]);
 
-  // Initialize all sections as expanded when sections change
+  // Initialize all sections as collapsed by default when sections change
   useEffect(() => {
     const allSections = new Set(groupedBySection.map(g => g.section));
     setExpandedSections(prev => {
-      const next = new Set(prev);
-      // Add any new sections (default to expanded)
-      for (const section of allSections) {
-        if (!prev.has(section)) next.add(section);
-      }
-      // Remove sections that no longer exist
+      const next = new Set();
+      // Only keep sections that were already expanded (preserve user's manual expansion)
       for (const section of prev) {
-        if (!allSections.has(section)) next.delete(section);
+        if (allSections.has(section)) {
+          next.add(section);
+        }
       }
+      // New sections are not added (default to collapsed)
       return next;
     });
   }, [groupedBySection]);
@@ -103,13 +102,12 @@ function Inventory() {
     setExpandedSections(new Set());
   };
 
-  const handleImport = async () => {
+  const handleDownload = async () => {
     try {
-      await importInventoryFromExcel();
-      await load(q, lowOnly);
-      alert('Imported inventory from Excel successfully');
+      await downloadInventoryExcel();
+      // Download is handled by the API function, no need to reload
     } catch (e) {
-      alert('Import failed: ' + (e.response?.data?.error || e.message));
+      alert('Download failed: ' + (e.response?.data?.error || e.message));
     }
   };
 
@@ -190,8 +188,8 @@ function Inventory() {
             </button>
           </div>
           {isAdmin() && viewMode === 'inventory' && (
-            <button className="btn btn-primary" onClick={handleImport}>
-              Sync from Excel
+            <button className="btn btn-primary" onClick={handleDownload}>
+              Download
             </button>
           )}
         </div>
@@ -425,7 +423,7 @@ function Inventory() {
           <div style={{ background: '#f8f9fa', padding: '12px', borderRadius: '8px', marginBottom: '16px', borderLeft: '4px solid var(--md-info)' }}>
             <strong style={{ color: 'var(--md-info)', display: 'block', marginBottom: '4px' }}>ℹ️ Note:</strong>
             <p style={{ margin: 0, fontSize: '13px', color: '#666' }}>
-              Use this form <strong>only when new stock arrives</strong>. Spares used in PM/CM tasks are automatically deducted from inventory.
+              Use this form <strong>only when new stock arrives from suppliers</strong>. When spares are approved for use in PM/CM tasks (via spare requests), they are automatically deducted from the available stock (Actual Qty).
             </p>
           </div>
 
@@ -483,14 +481,14 @@ function Inventory() {
             </button>
           </div>
           <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '11px', color: '#dc3545', textAlign: 'center' }}>
-            When spares are used in PM/CM tasks, they are automatically deducted from the available stock (Actual Qty). The "Restock" button should only be used when new stock arrives from suppliers.
+            When spares are approved for use in PM/CM tasks (via spare requests), they are automatically deducted from the available stock (Actual Qty). The "Restock" button should only be used when new stock arrives from suppliers.
           </p>
         </div>
       )}
 
       {!adjusting && viewMode === 'inventory' && (
         <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '11px', color: '#dc3545', textAlign: 'center' }}>
-          When spares are used in PM/CM tasks, they are automatically deducted from the available stock (Actual Qty). The "Restock" button should only be used when new stock arrives from suppliers.
+          When spares are approved for use in PM/CM tasks (via spare requests), they are automatically deducted from the available stock (Actual Qty). The "Restock" button should only be used when new stock arrives from suppliers.
         </p>
       )}
         </>

@@ -1,11 +1,14 @@
 const express = require('express');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin, isTechnician } = require('../middleware/auth');
 const fs = require('fs');
-const { parseInventoryFromExcel, updateActualQtyInExcel, DEFAULT_INVENTORY_XLSX } = require('../utils/inventoryExcelSync');
+const { parseInventoryFromExcel, updateActualQtyInExcel, exportInventoryToExcel, DEFAULT_INVENTORY_XLSX } = require('../utils/inventoryExcelSync');
 const { v4: uuidv4 } = require('uuid');
 
 module.exports = (pool) => {
   const router = express.Router();
+  
+  console.log('[INVENTORY] Inventory routes module loaded');
+  console.log('[INVENTORY] Registering routes...');
 
   // Automatic Excel -> DB sync (safe, only runs when Excel file changes)
   // This makes "Sync from Excel" effectively automatic for all users.
@@ -67,6 +70,11 @@ module.exports = (pool) => {
     await syncInFlight;
   }
 
+  // Test endpoint to verify routes are working
+  router.get('/test', (req, res) => {
+    res.json({ message: 'Inventory routes are working', timestamp: new Date().toISOString() });
+  });
+
   // List inventory items
   router.get('/items', requireAuth, async (req, res) => {
     try {
@@ -98,7 +106,7 @@ module.exports = (pool) => {
     }
   });
 
-  // Import/refresh items from Excel (admin only)
+  // Import/refresh items from Excel (admin only) - kept for backward compatibility
   router.post('/import', requireAdmin, async (req, res) => {
     try {
       const out = await syncInventoryFromExcel();
@@ -112,6 +120,53 @@ module.exports = (pool) => {
       res.json(out);
     } catch (e) {
       res.status(500).json({ error: 'Failed to import inventory from Excel', details: e.message });
+    }
+  });
+
+  // Download inventory as Excel file (admin only) - uses existing template
+  // IMPORTANT: This route must be defined BEFORE any catch-all routes
+  console.log('[INVENTORY] Registering GET /download route');
+  router.get('/download', requireAdmin, async (req, res) => {
+    console.log('[INVENTORY] ========== DOWNLOAD REQUEST ==========');
+    console.log('[INVENTORY] Download request received from:', req.session?.username || 'unknown');
+    console.log('[INVENTORY] User ID:', req.session?.userId);
+    console.log('[INVENTORY] User role:', req.session?.role);
+    console.log('[INVENTORY] Request method:', req.method);
+    console.log('[INVENTORY] Request path:', req.path);
+    console.log('[INVENTORY] Request originalUrl:', req.originalUrl);
+    console.log('[INVENTORY] ======================================');
+    
+    try {
+      console.log('[INVENTORY] Starting export to Excel...');
+      const buffer = await exportInventoryToExcel(pool);
+      console.log('[INVENTORY] Excel export successful, buffer size:', buffer.length, 'bytes');
+      
+      // Set headers for file download
+      const filename = `Inventory_Count_${new Date().toISOString().split('T')[0]}.xlsx`;
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', buffer.length);
+      
+      console.log('[INVENTORY] Sending file:', filename);
+      res.send(buffer);
+      console.log('[INVENTORY] File sent successfully');
+    } catch (e) {
+      console.error('[INVENTORY] Error exporting inventory to Excel:', e);
+      console.error('[INVENTORY] Error stack:', e.stack);
+      console.error('[INVENTORY] Error details:', {
+        message: e.message,
+        code: e.code,
+        path: e.path
+      });
+      
+      // Send error response
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: 'Failed to export inventory to Excel', 
+          details: e.message,
+          code: e.code || 'UNKNOWN_ERROR'
+        });
+      }
     }
   });
 
@@ -163,7 +218,8 @@ module.exports = (pool) => {
     }
   });
 
-  // Consume spares for a task (technician/admin). Creates a slip + transactions.
+  // Consume spares for a task (admin/super_admin only for direct consumption)
+  // Technicians must use spare requests for PM tasks
   // Body: { task_id, items: [{ item_code, qty_used }] }
   router.post('/consume', requireAuth, async (req, res) => {
     const client = await pool.connect();
@@ -171,6 +227,17 @@ module.exports = (pool) => {
       const { task_id, items } = req.body || {};
       if (!task_id) return res.status(400).json({ error: 'task_id is required' });
       if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items[] is required' });
+
+      // Check if user is technician trying to consume for PM task
+      if (isTechnician(req)) {
+        const taskResult = await client.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
+        if (taskResult.rows.length > 0 && taskResult.rows[0].task_type === 'PM') {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ 
+            error: 'Technicians cannot directly consume spares for PM tasks. Please use spare requests instead.' 
+          });
+        }
+      }
 
       await client.query('BEGIN');
 
@@ -308,6 +375,9 @@ module.exports = (pool) => {
          LIMIT 500`,
         params
       );
+      
+      // Note: Spare requests are now included in usage tracking since they create
+      // inventory_transactions and inventory_slips when approved
 
       res.json(result.rows);
     } catch (e) {
@@ -315,6 +385,7 @@ module.exports = (pool) => {
     }
   });
 
+  console.log('[INVENTORY] All inventory routes registered');
   return router;
 };
 

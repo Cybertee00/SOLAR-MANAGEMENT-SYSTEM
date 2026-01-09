@@ -4,7 +4,7 @@ import { getTasks, createTask, getAssets, getChecklistTemplates, getUsers } from
 import { useAuth } from '../context/AuthContext';
 
 function Tasks() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin } = useAuth();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -22,9 +22,11 @@ function Tasks() {
   const [newTask, setNewTask] = useState({
     checklist_template_id: '',
     asset_id: '',
-    assigned_to: '',
+    assigned_to: [], // Changed to array for multiple users
     task_type: 'PM',
     scheduled_date: '',
+    hours_worked: '',
+    budgeted_hours: ''
   });
 
   useEffect(() => {
@@ -86,18 +88,14 @@ function Tasks() {
   const handleCreateTask = async (e) => {
     e.preventDefault();
     
-    // Validate PCM tasks have scheduled_date
-    if (newTask.task_type === 'PCM' && !newTask.scheduled_date) {
-      alert('Scheduled date is required for PCM tasks');
-      return;
-    }
-    
     try {
-      // For PM tasks, don't send scheduled_date (backend will set it to today)
-      // For UCM, scheduled_date is optional
+      // Allow manual scheduling for all task types
+      // If not provided, backend will set appropriate defaults
       const taskData = {
         ...newTask,
-        scheduled_date: newTask.task_type === 'PM' ? undefined : (newTask.task_type === 'UCM' ? (newTask.scheduled_date || undefined) : newTask.scheduled_date)
+        scheduled_date: newTask.scheduled_date || undefined, // Send if provided, otherwise let backend decide
+        hours_worked: newTask.hours_worked ? parseFloat(newTask.hours_worked) : undefined,
+        budgeted_hours: isSuperAdmin() && newTask.budgeted_hours ? parseFloat(newTask.budgeted_hours) : undefined
       };
       
       const response = await createTask(taskData);
@@ -110,6 +108,9 @@ function Tasks() {
         assigned_to: '',
         task_type: 'PM',
         scheduled_date: '',
+        hours_worked: '',
+        budgeted_hours: '',
+        assigned_to: [] // Reset to empty array
       });
       loadTasks();
       alert(`Task created successfully! Task Code: ${response.data.task_code}`);
@@ -171,36 +172,120 @@ function Tasks() {
             </div>
             {isAdmin() && (
               <div className="form-group">
-                <label>Assign To (User)</label>
+                <label>Assign To (Users)</label>
                 <select
+                  multiple
                   value={newTask.assigned_to}
-                  onChange={(e) => setNewTask({ ...newTask, assigned_to: e.target.value })}
+                  onChange={(e) => {
+                    const selectedOptions = Array.from(e.target.selectedOptions, option => option.value);
+                    setNewTask({ ...newTask, assigned_to: selectedOptions });
+                  }}
+                  style={{
+                    width: '100%',
+                    minHeight: '120px',
+                    padding: '8px',
+                    borderRadius: '4px',
+                    border: '1px solid #ddd',
+                    fontSize: '14px',
+                    backgroundColor: '#fff',
+                    WebkitAppearance: 'menulist', // Better mobile support
+                    appearance: 'menulist'
+                  }}
+                  size={Math.min(users.filter(u => u.is_active).length, 4)} // Show max 4 options at once for mobile
                 >
-                  <option value="">Unassigned</option>
                   {users.filter(u => u.is_active).map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.full_name} ({u.username}) - {u.role}
                     </option>
                   ))}
                 </select>
-                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
-                  Select a user to assign this task to. Leave unassigned to assign later.
+                <small style={{ display: 'block', marginTop: '5px', color: '#666', fontSize: '12px' }}>
+                  {/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? (
+                    'Tap to select/deselect users. Selected users appear below.'
+                  ) : (
+                    'Hold Ctrl (Windows) or Cmd (Mac) to select multiple users.'
+                  )}
                 </small>
+                {newTask.assigned_to.length > 0 && (
+                  <div style={{ marginTop: '10px' }}>
+                    <div style={{ 
+                      display: 'flex', 
+                      flexWrap: 'wrap', 
+                      gap: '6px',
+                      padding: '8px',
+                      backgroundColor: '#f8f9fa',
+                      borderRadius: '4px',
+                      border: '1px solid #e9ecef'
+                    }}>
+                      {newTask.assigned_to.map(userId => {
+                        const user = users.find(u => u.id === userId);
+                        return user ? (
+                          <span 
+                            key={userId}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              padding: '4px 10px',
+                              backgroundColor: '#007bff',
+                              color: '#fff',
+                              borderRadius: '16px',
+                              fontSize: '12px',
+                              fontWeight: '500'
+                            }}
+                          >
+                            {user.full_name || user.username}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setNewTask({ 
+                                  ...newTask, 
+                                  assigned_to: newTask.assigned_to.filter(id => id !== userId) 
+                                });
+                              }}
+                              style={{
+                                marginLeft: '6px',
+                                background: 'rgba(255,255,255,0.3)',
+                                border: 'none',
+                                color: '#fff',
+                                borderRadius: '50%',
+                                width: '18px',
+                                height: '18px',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                lineHeight: '1',
+                                padding: '0',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                              title="Remove"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ) : null;
+                      })}
+                    </div>
+                    <div style={{ marginTop: '5px', fontSize: '12px', color: '#28a745', fontWeight: '500' }}>
+                      {newTask.assigned_to.length} user{newTask.assigned_to.length !== 1 ? 's' : ''} selected
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             <div className="form-group">
               <label>Task Type</label>
               <select
                 value={newTask.task_type}
-                onChange={(e) => {
-                  const taskType = e.target.value;
-                  setNewTask({ 
-                    ...newTask, 
-                    task_type: taskType,
-                    // Clear scheduled_date when switching to PM (will be auto-set)
-                    scheduled_date: taskType === 'PM' ? '' : newTask.scheduled_date
-                  });
-                }}
+                  onChange={(e) => {
+                    const taskType = e.target.value;
+                    setNewTask({
+                      ...newTask,
+                      task_type: taskType
+                      // Keep scheduled_date when switching task types
+                    });
+                  }}
                 required
               >
                 <option value="PM">Preventive Maintenance (PM)</option>
@@ -211,36 +296,53 @@ function Tasks() {
             <div className="form-group">
               <label>
                 Scheduled Date
-                {newTask.task_type === 'PM' && (
-                  <span style={{ fontSize: '12px', color: '#666', marginLeft: '10px' }}>
-                    (Will be set to today's date automatically)
-                  </span>
-                )}
-                {newTask.task_type === 'PCM' && (
-                  <span style={{ fontSize: '12px', color: '#dc3545', marginLeft: '10px' }}>
-                    * Required for PCM tasks
-                  </span>
-                )}
-                {newTask.task_type === 'UCM' && (
-                  <span style={{ fontSize: '12px', color: '#666', marginLeft: '10px' }}>
-                    (Optional - can be set later)
-                  </span>
-                )}
+                <span style={{ fontSize: '12px', color: '#666', marginLeft: '10px' }}>
+                  (Optional - defaults to today if not set)
+                </span>
               </label>
               <input
                 type="date"
                 value={newTask.scheduled_date}
                 onChange={(e) => setNewTask({ ...newTask, scheduled_date: e.target.value })}
-                required={newTask.task_type === 'PCM'}
-                disabled={newTask.task_type === 'PM'}
-                style={newTask.task_type === 'PM' ? { backgroundColor: '#f5f5f5', cursor: 'not-allowed' } : {}}
+                min={new Date().toISOString().split('T')[0]} // Prevent selecting past dates
               />
-              {newTask.task_type === 'PM' && (
-                <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-                  PM tasks are automatically scheduled for today ({new Date().toLocaleDateString()})
-                </p>
-              )}
+              <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+                {newTask.scheduled_date 
+                  ? `Task will be scheduled for ${new Date(newTask.scheduled_date).toLocaleDateString()}`
+                  : `If not set, task will be scheduled for today (${new Date().toLocaleDateString()})`
+                }
+              </p>
             </div>
+            <div className="form-group">
+              <label>Hours Worked (Optional)</label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                value={newTask.hours_worked}
+                onChange={(e) => setNewTask({ ...newTask, hours_worked: e.target.value })}
+                placeholder="0.0"
+              />
+              <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                Number of hours worked on this task (if already started)
+              </small>
+            </div>
+            {isSuperAdmin() && (
+              <div className="form-group">
+                <label>Budgeted Hours (Super Admin Only)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={newTask.budgeted_hours}
+                  onChange={(e) => setNewTask({ ...newTask, budgeted_hours: e.target.value })}
+                  placeholder="0.0"
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                  Maximum hours allocated for this task. Task will be flagged if exceeded.
+                </small>
+              </div>
+            )}
             <button type="submit" className="btn btn-primary">Create Task</button>
           </form>
         </div>
@@ -331,24 +433,102 @@ function Tasks() {
                         <th style={{ padding: '10px', textAlign: 'left' }}>Template</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Type</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Asset</th>
+                        <th style={{ padding: '10px', textAlign: 'left' }}>Assigned To</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Status</th>
+                        <th style={{ padding: '10px', textAlign: 'left' }}>Hours</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Scheduled</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {currentTasks.map((task) => (
-                        <tr key={task.id} style={{ borderBottom: '1px solid #eee' }}>
-                          <td data-label="Task Code" style={{ padding: '10px' }}>{task.task_code}</td>
+                      {currentTasks.map((task) => {
+                        const isFlagged = task.is_flagged;
+                        const hoursExceeded = task.budgeted_hours && task.hours_worked && 
+                                             task.hours_worked > task.budgeted_hours && 
+                                             task.status !== 'completed';
+                        
+                        return (
+                        <tr 
+                          key={task.id} 
+                          style={{ 
+                            borderBottom: '1px solid #eee',
+                            backgroundColor: isFlagged ? '#fff3cd' : 'transparent',
+                            borderLeft: isFlagged ? '4px solid #ffc107' : 'none'
+                          }}
+                        >
+                          <td data-label="Task Code" style={{ padding: '10px' }}>
+                            {task.task_code}
+                            {isFlagged && (
+                              <span style={{ 
+                                marginLeft: '8px', 
+                                padding: '2px 6px', 
+                                background: '#ffc107', 
+                                color: '#000',
+                                borderRadius: '4px',
+                                fontSize: '10px',
+                                fontWeight: 'bold'
+                              }}>
+                                ⚠ FLAGGED
+                              </span>
+                            )}
+                          </td>
                           <td data-label="Template" style={{ padding: '10px' }}>{task.template_name || 'N/A'}</td>
                           <td data-label="Type" style={{ padding: '10px' }}>
-                            <span className={`task-badge ${task.task_type}`}>{task.task_type}</span>
+                            <span className={`task-badge ${task.task_type}`} style={{ fontSize: '11px', padding: '4px 8px' }}>{task.task_type}</span>
                           </td>
                           <td data-label="Asset" style={{ padding: '10px' }}>{task.asset_name || 'N/A'}</td>
+                          <td data-label="Assigned To" style={{ padding: '10px' }}>
+                            {task.assigned_users && task.assigned_users.length > 0 ? (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                {task.assigned_users.map((user, idx) => {
+                                  // Extract first name from full_name or use username
+                                  const displayName = user.full_name 
+                                    ? user.full_name.split(' ')[0]
+                                    : (user.username ? user.username.split(' ')[0] : 'Unknown');
+                                  return (
+                                    <span 
+                                      key={user.id || idx} 
+                                      style={{ 
+                                        fontSize: '12px',
+                                        color: '#333',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                    >
+                                      {displayName}
+                                      {idx < task.assigned_users.length - 1 && ','}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <span style={{ color: '#999', fontStyle: 'italic', fontSize: '12px' }}>Unassigned</span>
+                            )}
+                          </td>
                           <td data-label="Status" style={{ padding: '10px' }}>
-                            <span className={`task-badge ${task.status}`}>
+                            <span className={`task-badge ${task.status}`} style={{ fontSize: '10px', padding: '4px 8px', lineHeight: '1.2' }}>
                               {task.status.replace('_', ' ')}
                             </span>
+                          </td>
+                          <td data-label="Hours" style={{ padding: '10px' }}>
+                            <div style={{ fontSize: '13px' }}>
+                              {task.hours_worked ? (
+                                <span style={{ color: hoursExceeded ? '#dc3545' : '#333', fontWeight: hoursExceeded ? 'bold' : 'normal' }}>
+                                  {parseFloat(task.hours_worked).toFixed(1)}h
+                                </span>
+                              ) : (
+                                <span style={{ color: '#999' }}>0h</span>
+                              )}
+                              {task.budgeted_hours && (
+                                <span style={{ color: '#666', marginLeft: '4px' }}>
+                                  / {parseFloat(task.budgeted_hours).toFixed(1)}h
+                                </span>
+                              )}
+                              {hoursExceeded && (
+                                <div style={{ fontSize: '11px', color: '#dc3545', marginTop: '2px' }}>
+                                  Budget exceeded!
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td data-label="Scheduled" style={{ padding: '10px' }}>
                             {task.scheduled_date ? new Date(task.scheduled_date).toLocaleDateString() : 'N/A'}
@@ -359,7 +539,8 @@ function Tasks() {
                             </Link>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                   

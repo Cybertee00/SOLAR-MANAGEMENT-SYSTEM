@@ -13,9 +13,12 @@ const pool = new Pool({
 
 async function runMigration() {
   try {
-    console.log('Running migration: add_task_metadata.sql');
+    // Get migration file name from command line argument
+    const migrationFileName = process.argv[2] || 'add_role_system_and_spare_requests.sql';
     
-    const migrationPath = path.join(__dirname, '../db/migrations/add_task_metadata.sql');
+    console.log(`Running migration: ${migrationFileName}`);
+    
+    const migrationPath = path.join(__dirname, '../db/migrations', migrationFileName);
     if (!fs.existsSync(migrationPath)) {
       console.error('Migration file not found:', migrationPath);
       process.exit(1);
@@ -23,7 +26,7 @@ async function runMigration() {
 
     const migration = fs.readFileSync(migrationPath, 'utf8');
     await pool.query(migration);
-    console.log('Migration applied successfully!');
+    console.log(`Migration ${migrationFileName} applied successfully!`);
     
     await pool.end();
   } catch (error) {
