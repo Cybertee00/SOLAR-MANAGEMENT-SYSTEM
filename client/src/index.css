@@ -4,6 +4,17 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap');
 
+/* Force light mode - prevent dark mode on mobile devices */
+html {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  html {
+    color-scheme: light; /* Override system dark mode preference */
+  }
+}
+
 :root {
   --mobile-breakpoint: 768px;
   
@@ -47,10 +58,19 @@ body {
   font-family: 'Roboto', 'Helvetica', 'Arial', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--md-background);
-  color: var(--md-text-dark);
+  background-color: var(--md-background) !important;
+  color: var(--md-text-dark) !important;
   font-weight: 400;
   line-height: 1.6;
+  color-scheme: light; /* Force light mode */
+}
+
+/* Override any dark mode styles that might be applied by the browser */
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: var(--md-background) !important;
+    color: var(--md-text-dark) !important;
+  }
 }
 
 code {

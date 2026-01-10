@@ -112,8 +112,8 @@ const validatePassword = (fieldName = 'password', minLength = 6) => {
 const validateRole = () => {
   return body('role')
     .optional()
-    .isIn(['admin', 'supervisor', 'technician'])
-    .withMessage('Role must be one of: admin, supervisor, technician');
+    .isIn(['admin', 'super_admin', 'supervisor', 'technician'])
+    .withMessage('Role must be one of: admin, super_admin, supervisor, technician');
 };
 
 /**
@@ -227,12 +227,29 @@ function removeUnexpectedFields(allowedFields) {
  * User creation validation schema
  */
 const validateCreateUser = [
-  removeUnexpectedFields(['username', 'email', 'full_name', 'role', 'password']),
+  removeUnexpectedFields(['username', 'email', 'full_name', 'role', 'roles', 'password']),
   validateUsername(),
   validateEmail('email'),
   validateString('full_name', 255, true),
   validateRole(),
-  validatePassword('password', 6),
+  body('roles')
+    .optional()
+    .isArray()
+    .withMessage('roles must be an array')
+    .custom((roles) => {
+      if (roles && roles.length > 0) {
+        const validRoles = ['technician', 'supervisor', 'admin', 'super_admin'];
+        const invalidRoles = roles.filter(r => !validRoles.includes(r));
+        if (invalidRoles.length > 0) {
+          throw new Error(`Invalid roles: ${invalidRoles.join(', ')}. Valid roles: ${validRoles.join(', ')}`);
+        }
+      }
+      return true;
+    }),
+  body('password')
+    .optional()
+    .isLength({ min: 6, max: 128 })
+    .withMessage('Password must be between 6 and 128 characters'),
   handleValidationErrors
 ];
 
@@ -240,12 +257,29 @@ const validateCreateUser = [
  * User update validation schema
  */
 const validateUpdateUser = [
-  removeUnexpectedFields(['email', 'full_name', 'role', 'password', 'is_active']),
+  removeUnexpectedFields(['email', 'full_name', 'role', 'roles', 'password', 'is_active']),
   validateUUID('id', 'param'),
   validateEmail('email').optional(),
   validateString('full_name', 255).optional(),
   validateRole(),
-  validatePassword('password', 6).optional(),
+  body('roles')
+    .optional()
+    .isArray()
+    .withMessage('roles must be an array')
+    .custom((roles) => {
+      if (roles && roles.length > 0) {
+        const validRoles = ['technician', 'supervisor', 'admin', 'super_admin'];
+        const invalidRoles = roles.filter(r => !validRoles.includes(r));
+        if (invalidRoles.length > 0) {
+          throw new Error(`Invalid roles: ${invalidRoles.join(', ')}. Valid roles: ${validRoles.join(', ')}`);
+        }
+      }
+      return true;
+    }),
+  body('password')
+    .optional()
+    .isLength({ min: 6, max: 128 })
+    .withMessage('Password must be between 6 and 128 characters'),
   body('is_active').optional().isBoolean().withMessage('is_active must be a boolean'),
   handleValidationErrors
 ];
