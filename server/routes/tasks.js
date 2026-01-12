@@ -4,7 +4,8 @@ const { mapTaskDataToTemplate } = require('../utils/dataMapper');
 const { generateWordDocument } = require('../utils/wordGenerator');
 const { generateExcelDocument } = require('../utils/excelGenerator');
 const { emitEvent } = require('../utils/webhookEmitter');
-const { notifyTaskAssigned, notifyTaskFlagged } = require('../utils/notifications');
+const { notifyTaskAssigned, notifyTaskFlagged, notifyTaskPaused, notifyOvertimeRequest } = require('../utils/notifications');
+const { isOutsideWorkingHours, formatTime, getWorkingHoursDescription } = require('../utils/overtime');
 const { requireAuth, requireAdmin, requireSuperAdmin, isSuperAdmin, isAdmin } = require('../middleware/auth');
 const { validateCreateTask } = require('../middleware/inputValidation');
 
@@ -39,13 +40,19 @@ module.exports = (pool) => {
                t.duration_minutes, t.overall_status, t.parent_task_id, t.created_at, t.updated_at,
                t.hours_worked, t.budgeted_hours, t.is_flagged, t.flag_reason, t.assigned_at,
                t.can_open_before_scheduled,
+               t.is_paused, t.paused_at, t.resumed_at, t.pause_reason, t.total_pause_duration_minutes,
                a.asset_code, a.asset_name,
                ct.template_name, ct.template_code,
-               COALESCE(taa.assigned_users, '[]'::json) as assigned_users
+               COALESCE(taa.assigned_users, '[]'::json) as assigned_users,
+               pm_user.id as pm_performed_by_id,
+               pm_user.full_name as pm_performed_by_name,
+               pm_user.username as pm_performed_by_username,
+               pm_user.email as pm_performed_by_email
         FROM tasks t
         LEFT JOIN assets a ON t.asset_id = a.id
         LEFT JOIN checklist_templates ct ON t.checklist_template_id = ct.id
         LEFT JOIN task_assignments_agg taa ON t.id = taa.task_id
+        LEFT JOIN users pm_user ON t.pm_performed_by = pm_user.id
         WHERE 1=1
       `;
       const params = [];
@@ -138,11 +145,16 @@ module.exports = (pool) => {
                ct.asset_type as template_asset_type, ct.task_type as template_task_type,
                ct.frequency, ct.checklist_structure, ct.validation_rules, ct.cm_generation_rules,
                ct.created_at as template_created_at, ct.updated_at as template_updated_at,
-               COALESCE(taa.assigned_users, '[]'::json) as assigned_users
+               COALESCE(taa.assigned_users, '[]'::json) as assigned_users,
+               pm_user.id as pm_performed_by_id,
+               pm_user.full_name as pm_performed_by_name,
+               pm_user.username as pm_performed_by_username,
+               pm_user.email as pm_performed_by_email
         FROM tasks t
         LEFT JOIN assets a ON t.asset_id = a.id
         LEFT JOIN checklist_templates ct ON t.checklist_template_id = ct.id
         LEFT JOIN task_assignments_agg taa ON t.id = taa.task_id
+        LEFT JOIN users pm_user ON t.pm_performed_by = pm_user.id
         WHERE t.id = $1
       `, [req.params.id]);
 
@@ -402,20 +414,72 @@ module.exports = (pool) => {
         }
       }
 
-      // Start the task
-      const result = await pool.query(
-        `UPDATE tasks 
-         SET status = 'in_progress', started_at = CURRENT_TIMESTAMP 
-         WHERE id = $1 AND status = 'pending' 
-         RETURNING *`,
-        [req.params.id]
-      );
-      
-      if (result.rows.length === 0) {
-        return res.status(400).json({ error: 'Task cannot be started (may already be started or completed)' });
+      // Check if starting outside working hours (07:00-16:00)
+      const now = new Date();
+      const outsideWorkingHours = isOutsideWorkingHours(now);
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // If starting outside working hours, automatically create overtime request for acknowledgement
+        let overtimeRequest = null;
+        if (outsideWorkingHours) {
+          // Get user info
+          const userResult = await client.query(
+            'SELECT id, full_name, username, email FROM users WHERE id = $1',
+            [req.session.userId]
+          );
+          const user = userResult.rows[0] || { id: req.session.userId, full_name: 'Unknown', username: 'unknown' };
+
+          // Create overtime request for acknowledgement
+          const overtimeResult = await client.query(
+            `INSERT INTO overtime_requests (task_id, requested_by, request_type, request_time, status)
+             VALUES ($1, $2, 'start_after_hours', $3, 'pending')
+             RETURNING *`,
+            [req.params.id, req.session.userId, now]
+          );
+          overtimeRequest = overtimeResult.rows[0];
+
+          // Send notification to super admins for acknowledgement
+          try {
+            await notifyOvertimeRequest(pool, overtimeRequest, { ...task, asset_name: task.asset_name }, user);
+          } catch (notifError) {
+            console.error('Error sending overtime notification:', notifError);
+            // Don't fail the request if notification fails
+          }
+        }
+
+        // Start the task
+        const result = await client.query(
+          `UPDATE tasks 
+           SET status = 'in_progress', started_at = CURRENT_TIMESTAMP 
+           WHERE id = $1 AND status = 'pending' 
+           RETURNING *`,
+          [req.params.id]
+        );
+        
+        if (result.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Task cannot be started (may already be started or completed)' });
+        }
+
+        await client.query('COMMIT');
+        
+        res.json({
+          ...result.rows[0],
+          overtime_request: overtimeRequest ? {
+            id: overtimeRequest.id,
+            status: overtimeRequest.status,
+            message: 'Overtime work detected. Super admin has been notified for acknowledgement.'
+          } : null
+        });
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
       }
-      
-      res.json(result.rows[0]);
     } catch (error) {
       console.error('Error starting task:', error);
       res.status(500).json({ error: 'Failed to start task' });
@@ -458,9 +522,14 @@ module.exports = (pool) => {
         finalCompletedAt = new Date();
       }
       
-      const duration = duration_minutes || (finalStartedAt 
+      // Calculate duration excluding pause time
+      const totalPauseDuration = task.total_pause_duration_minutes || 0;
+      const rawDuration = duration_minutes || (finalStartedAt 
         ? Math.round((finalCompletedAt - finalStartedAt) / 60000)
         : null);
+      
+      // Subtract pause time from total duration to get actual work time
+      const duration = rawDuration ? Math.max(0, rawDuration - totalPauseDuration) : null;
 
       // Build update query dynamically for UCM
       let updateFields = [
@@ -492,6 +561,45 @@ module.exports = (pool) => {
 
       const result = await pool.query(updateQuery, updateValues);
 
+      // Check if completing outside working hours (07:00-16:00)
+      const now = new Date();
+      const outsideWorkingHours = isOutsideWorkingHours(now);
+      
+      // If completing outside working hours, automatically create overtime request for acknowledgement
+      let overtimeRequest = null;
+      if (outsideWorkingHours) {
+        // Get user info
+        const userResult = await pool.query(
+          'SELECT id, full_name, username, email FROM users WHERE id = $1',
+          [req.session.userId]
+        );
+        const user = userResult.rows[0] || { id: req.session.userId, full_name: 'Unknown', username: 'unknown' };
+
+        // Get asset name for notification
+        const assetResult = await pool.query(
+          'SELECT asset_name FROM assets WHERE id = $1',
+          [task.asset_id]
+        );
+        const assetName = assetResult.rows[0]?.asset_name || 'Unknown Asset';
+
+        // Create overtime request for acknowledgement
+        const overtimeResult = await pool.query(
+          `INSERT INTO overtime_requests (task_id, requested_by, request_type, request_time, status)
+           VALUES ($1, $2, 'complete_after_hours', $3, 'pending')
+           RETURNING *`,
+          [req.params.id, req.session.userId, now]
+        );
+        overtimeRequest = overtimeResult.rows[0];
+
+        // Send notification to super admins for acknowledgement
+        try {
+          await notifyOvertimeRequest(pool, overtimeRequest, { ...task, asset_name: assetName }, user);
+        } catch (notifError) {
+          console.error('Error sending overtime notification:', notifError);
+          // Don't fail the request if notification fails
+        }
+      }
+
       // If PM task failed, generate PCM task
       if (task.task_type === 'PM' && overall_status === 'fail' && task.checklist_template_id) {
         await generateCMTask(pool, task.id, task.checklist_template_id, task.asset_id);
@@ -506,7 +614,14 @@ module.exports = (pool) => {
         completed_at: completedAt.toISOString()
       }).catch(() => {});
 
-      res.json(result.rows[0]);
+      res.json({
+        ...result.rows[0],
+        overtime_request: overtimeRequest ? {
+          id: overtimeRequest.id,
+          status: overtimeRequest.status,
+          message: 'Overtime work detected. Super admin has been notified for acknowledgement.'
+        } : null
+      });
     } catch (error) {
       console.error('Error completing task:', error);
       res.status(500).json({ error: 'Failed to complete task' });
@@ -719,6 +834,18 @@ async function generateCMTask(pool, pmTaskId, checklistTemplateId, assetId) {
     );
     const pmTask = pmTaskResult.rows[0];
 
+    // Get who performed the PM task (from checklist response)
+    const pmPerformedByResult = await pool.query(
+      `SELECT submitted_by FROM checklist_responses 
+       WHERE task_id = $1 
+       ORDER BY submitted_at DESC 
+       LIMIT 1`,
+      [pmTaskId]
+    );
+    const pmPerformedBy = pmPerformedByResult.rows.length > 0 
+      ? pmPerformedByResult.rows[0].submitted_by 
+      : null;
+
     // Find CM template for the same asset type
     const cmTemplateResult = await pool.query(
       `SELECT * FROM checklist_templates 
@@ -738,9 +865,9 @@ async function generateCMTask(pool, pmTaskId, checklistTemplateId, assetId) {
     const cmTaskResult = await pool.query(
       `INSERT INTO tasks (
         task_code, checklist_template_id, asset_id, task_type, 
-        status, parent_task_id, scheduled_date
-      ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE) RETURNING *`,
-      [taskCode, cmTemplateId, assetId, pmTaskId]
+        status, parent_task_id, scheduled_date, pm_performed_by
+      ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE, $5) RETURNING *`,
+      [taskCode, cmTemplateId, assetId, pmTaskId, pmPerformedBy]
     );
 
     const cmTask = cmTaskResult.rows[0];

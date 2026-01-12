@@ -161,6 +161,70 @@ async function notifyTaskFlagged(pool, task, assignedUser) {
 }
 
 /**
+ * Notify super admins about overtime work request
+ * @param {Object} pool - Database connection pool
+ * @param {Object} overtimeRequest - Overtime request object
+ * @param {Object} task - Task object
+ * @param {Object} user - User who requested overtime
+ */
+async function notifyOvertimeRequest(pool, overtimeRequest, task, user) {
+  try {
+    // Get all super admins
+    const superAdmins = await pool.query(
+      `SELECT id, full_name, email, username FROM users WHERE role = 'super_admin' AND is_active = TRUE`
+    );
+
+    if (superAdmins.rows.length === 0) {
+      console.warn('No super admins found to notify about overtime request');
+      return [];
+    }
+
+    const notifications = [];
+    const taskDetails = {
+      task_code: task.task_code,
+      task_type: task.task_type,
+      asset_name: task.asset_name || 'Unknown Asset'
+    };
+
+    const requestTypeText = overtimeRequest.request_type === 'start_after_hours' 
+      ? 'starting a task' 
+      : 'completing a task';
+
+    for (const superAdmin of superAdmins.rows) {
+      const message = `${user.full_name || user.username} is requesting approval for ${requestTypeText} outside working hours (07:00-16:00). Task: ${task.task_code}`;
+
+      const notification = await createNotification(pool, {
+        user_id: superAdmin.id,
+        task_id: task.id,
+        type: 'overtime_request',
+        title: 'Overtime Work - Acknowledgement Required',
+        message: message,
+        metadata: {
+          overtime_request_id: overtimeRequest.id,
+          task: taskDetails,
+          requested_by: {
+            id: user.id,
+            full_name: user.full_name,
+            username: user.username
+          },
+          request_type: overtimeRequest.request_type,
+          request_time: overtimeRequest.request_time,
+          current_time: new Date().toISOString()
+        }
+      });
+
+      notifications.push(notification);
+    }
+
+    console.log(`Overtime request notifications sent to ${superAdmins.rows.length} super admin(s) for task ${task.task_code}`);
+    return notifications;
+  } catch (error) {
+    console.error('Error sending overtime request notifications:', error);
+    return [];
+  }
+}
+
+/**
  * Notify user about early completion request status
  */
 async function notifyEarlyCompletionStatus(pool, request, task, approved) {
@@ -311,6 +375,8 @@ module.exports = {
   notifyTaskAssigned,
   notifyTaskReminder,
   notifyTaskFlagged,
+  notifyTaskPaused,
+  notifyOvertimeRequest,
   notifyEarlyCompletionStatus,
   notifySpareRequestApproved,
   scheduleReminders

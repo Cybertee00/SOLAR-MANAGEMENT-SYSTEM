@@ -1,4 +1,5 @@
 import axios from 'axios';
+import offlineApi from '../utils/offlineApi';
 
 // Determine API URL dynamically
 // If REACT_APP_API_URL is set, use it
@@ -192,12 +193,65 @@ export const getChecklistTemplatesByAssetType = (assetType) =>
 export const updateChecklistTemplateMetadata = (id, data) =>
   api.patch(`/checklist-templates/${id}/metadata`, data);
 
+// Helper function to make API calls offline-aware
+const makeOfflineAware = (apiCall) => {
+  return async (...args) => {
+    try {
+      // Try normal API first
+      return await apiCall(...args);
+    } catch (error) {
+      // If it's a network error and we're offline, queue it
+      if (!navigator.onLine || (!error.response && (error.message.includes('Network Error') || error.code === 'ERR_NETWORK'))) {
+        console.log('Network error detected, queueing request for offline sync');
+        
+        // Extract URL and data from the API call
+        let url = '';
+        let data = {};
+        let method = 'GET';
+        
+        if (typeof args[0] === 'string') {
+          url = args[0];
+        }
+        if (args[1]) {
+          data = args[1];
+        }
+        
+        // Determine method from function name
+        const funcName = apiCall.toString();
+        if (funcName.includes('patch')) method = 'PATCH';
+        else if (funcName.includes('post')) method = 'POST';
+        else if (funcName.includes('put')) method = 'PUT';
+        else if (funcName.includes('delete')) method = 'DELETE';
+        
+        // Use offline API to queue the request
+        const offlineResponse = await offlineApi.request({ method, url, data });
+        
+        // Return a response-like object
+        return {
+          data: offlineResponse.data,
+          status: offlineResponse.status || 202,
+          statusText: offlineResponse.statusText || 'Accepted',
+          headers: offlineResponse.headers || {},
+          config: { url, method, data }
+        };
+      }
+      throw error;
+    }
+  };
+};
+
 // Tasks
 export const getTasks = (params) => api.get('/tasks', { params });
 export const getTask = (id) => api.get(`/tasks/${id}`);
-export const createTask = (data) => api.post('/tasks', data);
-export const startTask = (id) => api.patch(`/tasks/${id}/start`);
-export const completeTask = (id, data) => api.patch(`/tasks/${id}/complete`, data);
+export const createTask = makeOfflineAware((data) => api.post('/tasks', data));
+export const startTask = makeOfflineAware((id) => api.patch(`/tasks/${id}/start`));
+export const getOvertimeRequests = (params) => api.get('/overtime-requests', { params });
+export const getOvertimeRequest = (id) => api.get(`/overtime-requests/${id}`);
+export const approveOvertimeRequest = (id) => api.patch(`/overtime-requests/${id}/approve`);
+export const rejectOvertimeRequest = (id, rejectionReason) => api.patch(`/overtime-requests/${id}/reject`, { rejection_reason: rejectionReason });
+export const pauseTask = makeOfflineAware((id, pauseReason) => api.patch(`/tasks/${id}/pause`, { pause_reason: pauseReason }));
+export const resumeTask = makeOfflineAware((id) => api.patch(`/tasks/${id}/resume`));
+export const completeTask = makeOfflineAware((id, data) => api.patch(`/tasks/${id}/complete`, data));
 // NOTE: Do NOT default to "word" here. If format is omitted, the server will
 // auto-select Word if available, otherwise Excel (based on template files).
 export const downloadTaskReport = (id, format = null) => {
@@ -218,7 +272,7 @@ export const downloadTaskReport = (id, format = null) => {
 // Checklist Responses
 export const getChecklistResponses = (params) => api.get('/checklist-responses', { params });
 export const getChecklistResponse = (id) => api.get(`/checklist-responses/${id}`);
-export const submitChecklistResponse = (data) => api.post('/checklist-responses', data);
+export const submitChecklistResponse = makeOfflineAware((data) => api.post('/checklist-responses', data));
 
 // Draft Checklist Responses (Auto-save)
 export const saveDraftResponse = (data) => api.post('/checklist-responses/draft', data);
@@ -306,6 +360,8 @@ export const consumeInventory = (data) => api.post('/inventory/consume', data);
 export const getInventorySlips = () => api.get('/inventory/slips');
 export const getInventorySlip = (id) => api.get(`/inventory/slips/${id}`);
 export const getSparesUsage = (params) => api.get('/inventory/usage', { params });
+export const createInventoryItem = (data) => api.post('/inventory/items', data);
+export const updateInventoryItem = (itemCode, data) => api.put(`/inventory/items/${itemCode}`, data);
 
 // Spare Requests API
 export const getSpareRequests = (params) => api.get('/spare-requests', { params });
@@ -323,11 +379,94 @@ export const updateTask = (id, data) => api.put(`/tasks/${id}`, data);
 // Profile API
 export const getProfile = () => api.get('/users/profile/me');
 export const updateProfile = (data) => api.put('/users/profile/me', data);
-export const uploadProfileImage = (file) => {
+export const uploadProfileImage = async (file) => {
   const formData = new FormData();
   formData.append('image', file);
-  // Don't set Content-Type header - let the browser set it automatically with the boundary
-  return api.post('/users/profile/me/avatar', formData);
+  
+  // Use fetch API for file uploads (like ChecklistForm) to avoid axios Content-Type header issues
+  // fetch automatically sets Content-Type with boundary for FormData
+  const API_BASE_URL = getApiBaseUrl();
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/users/profile/me/avatar`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include', // Include cookies for session management
+    });
+    
+    if (!response.ok) {
+      // Parse error response to match axios error format for compatibility
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { error: 'Failed to upload image' };
+      }
+      
+      // Create error object with axios-like structure for compatibility
+      const error = new Error(errorData.error || 'Failed to upload image');
+      error.response = {
+        status: response.status,
+        data: errorData,
+      };
+      throw error;
+    }
+    
+    const data = await response.json();
+    return { data };
+  } catch (error) {
+    // If it's already our custom error, re-throw it
+    if (error.response) {
+      throw error;
+    }
+    // For network errors or other fetch errors, wrap them
+    const wrappedError = new Error(error.message || 'Failed to upload image');
+    wrappedError.response = {
+      status: 0,
+      data: { error: error.message || 'Network error. Please check your connection.' },
+    };
+    throw wrappedError;
+  }
+};
+
+export const removeProfileImage = async () => {
+  const API_BASE_URL = getApiBaseUrl();
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/users/profile/me/avatar`, {
+      method: 'DELETE',
+      credentials: 'include', // Include cookies for session management
+    });
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { error: 'Failed to remove image' };
+      }
+      
+      const error = new Error(errorData.error || 'Failed to remove image');
+      error.response = {
+        status: response.status,
+        data: errorData,
+      };
+      throw error;
+    }
+    
+    const data = await response.json();
+    return { data };
+  } catch (error) {
+    if (error.response) {
+      throw error;
+    }
+    const wrappedError = new Error(error.message || 'Failed to remove image');
+    wrappedError.response = {
+      status: 0,
+      data: { error: error.message || 'Network error. Please check your connection.' },
+    };
+    throw wrappedError;
+  }
 };
 
 // Early Completion Requests API
@@ -343,6 +482,103 @@ export const getUnreadNotificationCount = () => api.get('/notifications/unread-c
 export const markNotificationAsRead = (id) => api.patch(`/notifications/${id}/read`);
 export const markAllNotificationsAsRead = () => api.patch('/notifications/read-all');
 export const deleteNotification = (id) => api.delete(`/notifications/${id}`);
+
+// Calendar API
+export const getCalendarEvents = (params) => api.get('/calendar', { params });
+export const getCalendarEvent = (id) => api.get(`/calendar/${id}`);
+export const getCalendarEventsByDate = (date) => api.get(`/calendar/date/${date}`);
+export const createCalendarEvent = (data) => api.post('/calendar', data);
+export const updateCalendarEvent = (id, data) => api.put(`/calendar/${id}`, data);
+export const deleteCalendarEvent = (id) => api.delete(`/calendar/${id}`);
+export const downloadYearCalendar = async (year = null) => {
+  const API_BASE_URL = getApiBaseUrl();
+  const params = year ? { year } : {};
+  const response = await axios.get(`${API_BASE_URL}/calendar/download`, {
+    params,
+    responseType: 'blob',
+    withCredentials: true
+  });
+  
+  // Create download link
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  const contentDisposition = response.headers['content-disposition'];
+  const filename = contentDisposition 
+    ? contentDisposition.split('filename=')[1].replace(/"/g, '')
+    : `Year Calendar ${year || new Date().getFullYear()}.xlsx`;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+// License API functions
+export const getLicenseStatus = async () => {
+  const API_BASE_URL = getApiBaseUrl();
+  try {
+    const response = await axios.get(`${API_BASE_URL}/license/status`, {
+      withCredentials: true,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching license status:', error);
+    throw error;
+  }
+};
+
+export const getLicenseInfo = async () => {
+  const API_BASE_URL = getApiBaseUrl();
+  try {
+    const response = await axios.get(`${API_BASE_URL}/license/info`, {
+      withCredentials: true,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching license info:', error);
+    throw error;
+  }
+};
+
+export const activateLicense = async (licenseData) => {
+  const API_BASE_URL = getApiBaseUrl();
+  try {
+    const response = await axios.post(`${API_BASE_URL}/license/activate`, licenseData, {
+      withCredentials: true,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error activating license:', error);
+    throw error;
+  }
+};
+
+export const renewLicense = async (licenseKey) => {
+  const API_BASE_URL = getApiBaseUrl();
+  try {
+    const response = await axios.put(`${API_BASE_URL}/license/renew`, { license_key: licenseKey }, {
+      withCredentials: true,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error renewing license:', error);
+    throw error;
+  }
+};
+
+export const generateLicenseKey = async (companyName) => {
+  const API_BASE_URL = getApiBaseUrl();
+  try {
+    const response = await axios.post(`${API_BASE_URL}/license/generate`, { company_name: companyName }, {
+      withCredentials: true,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error generating license key:', error);
+    throw error;
+  }
+};
 
 export default api;
 

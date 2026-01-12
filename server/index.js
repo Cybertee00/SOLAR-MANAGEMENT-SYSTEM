@@ -4,6 +4,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const session = require('express-session');
 const { Pool } = require('pg');
+const { initRedis } = require('./utils/redis');
 
 // Security middleware
 const { securityHeaders, sanitizeRequestBody, limitRequestSize, validateUUIDParams } = require('./middleware/security');
@@ -287,13 +288,19 @@ app.use((req, res, next) => {
   console.log(`[${timestamp}] ${method} ${path}${query} - User: ${user} (${role})`);
   
   // Log request body for POST/PUT/PATCH (but limit size to avoid spam)
-  if (['POST', 'PUT', 'PATCH'].includes(method) && req.body && Object.keys(req.body).length > 0) {
+  // Skip logging for multipart/form-data (file uploads) - handled by multer, not body parser
+  const contentType = req.headers['content-type'] || '';
+  if (['POST', 'PUT', 'PATCH'].includes(method) && !contentType.includes('multipart/form-data') && req.body && Object.keys(req.body).length > 0) {
     const bodyStr = JSON.stringify(req.body);
     if (bodyStr.length < 500) {
       console.log(`[${timestamp}] Request body:`, req.body);
     } else {
       console.log(`[${timestamp}] Request body: (too large, ${bodyStr.length} chars)`);
     }
+  }
+  // Log Content-Type for multipart requests to help debug file uploads
+  if (contentType.includes('multipart/form-data')) {
+    console.log(`[${timestamp}] Multipart/form-data request detected, Content-Type: ${contentType.substring(0, 50)}...`);
   }
   
   // Log response when it finishes
@@ -403,6 +410,11 @@ const webhooksRoutes = require('./routes/webhooks');
 const inventoryRoutes = require('./routes/inventory');
 const earlyCompletionRequestsRoutes = require('./routes/earlyCompletionRequests');
 const notificationsRoutes = require('./routes/notifications');
+const platformRoutes = require('./routes/platform');
+const calendarRoutes = require('./routes/calendar');
+const licenseRoutes = require('./routes/license');
+const syncRoutes = require('./routes/sync');
+const overtimeRequestsRoutes = require('./routes/overtimeRequests');
 
 // Swagger (OpenAPI) docs
 const swaggerUi = require('swagger-ui-express');
@@ -410,7 +422,7 @@ const swaggerJSDoc = require('swagger-jsdoc');
 const openapiSpec = swaggerJSDoc({
   definition: {
     openapi: '3.0.0',
-    info: { title: 'Solar O&M Maintenance API', version: '1.0.0' },
+    info: { title: 'SPHAiRPlatform API', version: '1.0.0' },
     servers: [{ url: '/api' }, { url: '/api/v1' }],
     components: {
       securitySchemes: {
@@ -429,33 +441,43 @@ app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 // app.use('/api/auth/change-password', sensitiveOperationLimiter);
 app.use('/api/auth', authRoutes(pool));
 
-// Protected routes
-app.use('/api/users', usersRoutes(pool));
-app.use('/api/assets', assetsRoutes(pool));
-app.use('/api/checklist-templates', checklistTemplatesRoutes(pool));
-app.use('/api/tasks', tasksRoutes(pool));
-app.use('/api/checklist-responses', checklistResponsesRoutes(pool));
-app.use('/api/cm-letters', cmLettersRoutes(pool));
-app.use('/api/upload', uploadRoutes(pool));
-app.use('/api/api-tokens', apiTokensRoutes(pool));
-app.use('/api/webhooks', webhooksRoutes(pool));
-app.use('/api/inventory', inventoryRoutes(pool));
-app.use('/api/spare-requests', require('./routes/spareRequests')(pool));
-app.use('/api/early-completion-requests', earlyCompletionRequestsRoutes(pool));
-app.use('/api/notifications', notificationsRoutes(pool));
+// License validation middleware (applied to all protected routes except license endpoints)
+const { requireValidLicense } = require('./middleware/license');
+const licenseCheck = requireValidLicense(pool);
+
+// Protected routes (require valid license)
+app.use('/api/users', licenseCheck, usersRoutes(pool));
+app.use('/api/assets', licenseCheck, assetsRoutes(pool));
+app.use('/api/checklist-templates', licenseCheck, checklistTemplatesRoutes(pool));
+app.use('/api/tasks', licenseCheck, tasksRoutes(pool));
+app.use('/api/checklist-responses', licenseCheck, checklistResponsesRoutes(pool));
+app.use('/api/cm-letters', licenseCheck, cmLettersRoutes(pool));
+app.use('/api/upload', licenseCheck, uploadRoutes(pool));
+app.use('/api/api-tokens', licenseCheck, apiTokensRoutes(pool));
+app.use('/api/webhooks', licenseCheck, webhooksRoutes(pool));
+app.use('/api/inventory', licenseCheck, inventoryRoutes(pool));
+app.use('/api/spare-requests', licenseCheck, require('./routes/spareRequests')(pool));
+app.use('/api/early-completion-requests', licenseCheck, earlyCompletionRequestsRoutes(pool));
+app.use('/api/notifications', licenseCheck, notificationsRoutes(pool));
+app.use('/api/platform', licenseCheck, platformRoutes(pool));
+app.use('/api/calendar', licenseCheck, calendarRoutes(pool));
+app.use('/api/license', licenseRoutes(pool));
+app.use('/api', syncRoutes(pool));
+app.use('/api/overtime-requests', licenseCheck, overtimeRequestsRoutes(pool));
 
 // Versioned API (v1) - mirrors /api for integration stability
 app.use('/api/v1/auth', authRoutes(pool));
-app.use('/api/v1/users', usersRoutes(pool));
-app.use('/api/v1/assets', assetsRoutes(pool));
-app.use('/api/v1/checklist-templates', checklistTemplatesRoutes(pool));
-app.use('/api/v1/tasks', tasksRoutes(pool));
-app.use('/api/v1/checklist-responses', checklistResponsesRoutes(pool));
-app.use('/api/v1/cm-letters', cmLettersRoutes(pool));
-app.use('/api/v1/upload', uploadRoutes(pool));
-app.use('/api/v1/api-tokens', apiTokensRoutes(pool));
-app.use('/api/v1/webhooks', webhooksRoutes(pool));
-app.use('/api/v1/inventory', inventoryRoutes(pool));
+app.use('/api/v1/users', licenseCheck, usersRoutes(pool));
+app.use('/api/v1/assets', licenseCheck, assetsRoutes(pool));
+app.use('/api/v1/checklist-templates', licenseCheck, checklistTemplatesRoutes(pool));
+app.use('/api/v1/tasks', licenseCheck, tasksRoutes(pool));
+app.use('/api/v1/checklist-responses', licenseCheck, checklistResponsesRoutes(pool));
+app.use('/api/v1/cm-letters', licenseCheck, cmLettersRoutes(pool));
+app.use('/api/v1/upload', licenseCheck, uploadRoutes(pool));
+app.use('/api/v1/api-tokens', licenseCheck, apiTokensRoutes(pool));
+app.use('/api/v1/webhooks', licenseCheck, webhooksRoutes(pool));
+app.use('/api/v1/inventory', licenseCheck, inventoryRoutes(pool));
+app.use('/api/v1/license', licenseRoutes(pool));
 
 // Create reports directory if it doesn't exist - ALL REPORTS SAVED HERE
 const reportsDir = path.join(__dirname, 'reports');
@@ -483,7 +505,7 @@ const excelTemplatesDir = path.join(templatesDir, 'excel');
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    message: 'Solar O&M API is running',
+    message: 'SPHAiRPlatform API is running',
     timestamp: new Date().toISOString(),
     session: req.session ? 'active' : 'none'
   });
@@ -517,10 +539,21 @@ setTimeout(async () => {
   }
 }, 5000); // Run 5 seconds after server start
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Access from network: http://YOUR_IP:${PORT}/api`);
-  console.log('Reminder notification scheduler started');
+// Initialize Redis and start server
+initRedis().then(() => {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Access from network: http://YOUR_IP:${PORT}/api`);
+    console.log('Reminder notification scheduler started');
+  });
+}).catch((error) => {
+  console.error('Failed to initialize Redis:', error);
+  // Start server anyway (will use memory store for sessions)
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT} (without Redis)`);
+    console.log(`Access from network: http://YOUR_IP:${PORT}/api`);
+    console.log('Reminder notification scheduler started');
+  });
 });
 
 module.exports = app;

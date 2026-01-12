@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getTask, startTask, completeTask, downloadTaskReport, getEarlyCompletionRequests, createEarlyCompletionRequest, getSpareRequests } from '../api/api';
+import { getTask, startTask, pauseTask, resumeTask, completeTask, downloadTaskReport, getEarlyCompletionRequests, createEarlyCompletionRequest, getSpareRequests } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 
 function TaskDetail() {
@@ -66,9 +66,21 @@ function TaskDetail() {
 
   const handleStartTask = async () => {
     try {
-      await startTask(id);
+      // Start task - overtime request will be created automatically if outside working hours
+      const response = await startTask(id);
       loadTask();
       loadSpareRequests(); // Reload spare requests in case status changed
+      
+      // Check if overtime request was created
+      if (response.data?.overtime_request) {
+        const now = new Date();
+        const hour = now.getHours();
+        const isOutsideWorkingHours = hour < 7 || hour >= 16;
+        
+        if (isOutsideWorkingHours) {
+          alert('Task started outside normal working hours. Super admin has been notified for acknowledgement of your overtime work.');
+        }
+      }
     } catch (error) {
       console.error('Error starting task:', error);
       const errorMessage = error.response?.data?.error || 'Failed to start task';
@@ -111,6 +123,35 @@ function TaskDetail() {
     }
   };
 
+  const handlePauseTask = async () => {
+    if (!pauseReason.trim()) {
+      alert('Please provide a reason for pausing the task');
+      return;
+    }
+
+    try {
+      await pauseTask(id, pauseReason.trim());
+      setShowPauseModal(false);
+      setPauseReason('');
+      loadTask();
+      alert('Task paused successfully. Super admin has been notified.');
+    } catch (error) {
+      console.error('Error pausing task:', error);
+      alert(error.response?.data?.error || 'Failed to pause task');
+    }
+  };
+
+  const handleResumeTask = async () => {
+    try {
+      await resumeTask(id);
+      loadTask();
+      alert('Task resumed successfully');
+    } catch (error) {
+      console.error('Error resuming task:', error);
+      alert(error.response?.data?.error || 'Failed to resume task');
+    }
+  };
+
   const handleCompleteTask = async () => {
     if (!window.confirm('Are you sure you want to complete this task? Make sure you have submitted the checklist.')) {
       return;
@@ -140,7 +181,7 @@ function TaskDetail() {
   return (
     <div>
       <div style={{ marginBottom: '20px' }}>
-        <Link to="/tasks" className="btn btn-secondary">← Back to Tasks</Link>
+        <Link to="/tasks" className="btn btn-secondary">Back to Tasks</Link>
       </div>
 
       <div className="card">
@@ -162,6 +203,11 @@ function TaskDetail() {
             <strong>Status:</strong> <span className={`task-badge ${task.status}`}>
               {task.status.replace('_', ' ')}
             </span>
+            {task.is_paused && (
+              <span className="task-badge" style={{ marginLeft: '8px', background: '#ffc107', color: '#000' }}>
+                Paused
+              </span>
+            )}
           </div>
           <div>
             <strong>Overall Status:</strong> {task.overall_status ? (
@@ -198,12 +244,12 @@ function TaskDetail() {
           )}
           {task.is_flagged && (
             <div style={{ color: '#dc3545', fontWeight: 'bold' }}>
-              ⚠ <strong>FLAGGED:</strong> {task.flag_reason || 'Task has exceeded budgeted hours'}
+              <strong>WARNING - FLAGGED:</strong> {task.flag_reason || 'Task has exceeded budgeted hours'}
             </div>
           )}
           {task.can_open_before_scheduled && (
             <div style={{ color: '#28a745', fontWeight: 'bold' }}>
-              ✅ Early completion approved - Task can be started before scheduled date
+              <strong>Early completion approved</strong> - Task can be started before scheduled date
             </div>
           )}
           {task.started_at && (
@@ -219,6 +265,38 @@ function TaskDetail() {
           {task.duration_minutes && (
             <div>
               <strong>Duration:</strong> {task.duration_minutes} minutes
+              {task.total_pause_duration_minutes > 0 && (
+                <span style={{ color: '#666', marginLeft: '8px', fontSize: '13px' }}>
+                  (Paused: {task.total_pause_duration_minutes} min)
+                </span>
+              )}
+            </div>
+          )}
+          {task.is_paused && task.paused_at && (
+            <div style={{ color: '#ffc107', fontWeight: '500' }}>
+              <strong>Paused At:</strong> {new Date(task.paused_at).toLocaleString()}
+              {task.pause_reason && (
+                <div style={{ marginTop: '4px', fontSize: '13px', color: '#666' }}>
+                  <strong>Reason:</strong> {task.pause_reason}
+                </div>
+              )}
+            </div>
+          )}
+          {(task.task_type === 'PCM' || task.task_type === 'UCM') && task.parent_task_id && (
+            <div>
+              <strong>PM Task Performed By:</strong>{' '}
+              {task.pm_performed_by_name ? (
+                <span>
+                  {task.pm_performed_by_name}
+                  {task.pm_performed_by_email && (
+                    <span style={{ color: '#666', marginLeft: '8px' }}>
+                      ({task.pm_performed_by_email})
+                    </span>
+                  )}
+                </span>
+              ) : (
+                'Not available'
+              )}
             </div>
           )}
         </div>
@@ -227,6 +305,11 @@ function TaskDetail() {
           <h3>Task Identification</h3>
           <p><strong>This is a {task.task_type} task</strong> for the <strong>{task.asset_type || 'asset'}</strong> asset type.</p>
           <p>Checklist Template: <strong>{task.template_name}</strong> ({task.template_code})</p>
+          {(task.task_type === 'PCM' || task.task_type === 'UCM') && task.parent_task_id && (
+            <p style={{ marginTop: '10px', color: '#666' }}>
+              This CM task was generated from a failed PM task. The PM task was performed by: <strong>{task.pm_performed_by_name || 'Unknown'}</strong>
+            </p>
+          )}
         </div>
 
         {/* Early Completion Request Section */}
@@ -240,7 +323,7 @@ function TaskDetail() {
             borderLeft: '4px solid #ffc107',
             borderRadius: '4px'
           }}>
-            <h4 style={{ marginTop: 0 }}>⚠ Task Scheduled for {new Date(task.scheduled_date).toLocaleDateString()}</h4>
+            <h4 style={{ marginTop: 0 }}>Task Scheduled for {new Date(task.scheduled_date).toLocaleDateString()}</h4>
             <p style={{ marginBottom: '10px' }}>
               This task is scheduled for a future date. You can request to complete it early if needed.
             </p>
@@ -250,7 +333,7 @@ function TaskDetail() {
               </div>
             ) : earlyCompletionRequests.some(r => r.status === 'approved') ? (
               <div style={{ padding: '10px', background: '#d4edda', borderRadius: '4px', color: '#155724' }}>
-                <strong>✅ Early completion approved!</strong> You can now start this task.
+                <strong>Early completion approved!</strong> You can now start this task.
               </div>
             ) : (
               <button 
@@ -277,7 +360,7 @@ function TaskDetail() {
               width: '100%',
               marginBottom: '10px'
             }}>
-              <strong>⚠️ Waiting for Spare Approval:</strong> This CM task cannot be started until the spare request(s) have been approved by an admin. 
+              <strong>WARNING - Waiting for Spare Approval:</strong> This CM task cannot be started until the spare request(s) have been approved by an admin. 
               Please wait for notification that the spares have been approved.
             </div>
           )}
@@ -304,6 +387,31 @@ function TaskDetail() {
             }}>
               <strong>View Only:</strong> This task is not assigned to you. You can view details and download reports, but cannot start or modify this task.
             </div>
+          )}
+          {/* Show Pause/Resume buttons if task is in progress */}
+          {task.status === 'in_progress' && 
+           task.assigned_users && 
+           task.assigned_users.some(u => u.id === user?.id) && (
+            <>
+              {!task.is_paused && (
+                <button 
+                  className="btn btn-warning" 
+                  onClick={() => setShowPauseModal(true)}
+                  style={{ marginLeft: '10px' }}
+                >
+                  Pause Task
+                </button>
+              )}
+              {task.is_paused && (
+                <button 
+                  className="btn btn-info" 
+                  onClick={handleResumeTask}
+                  style={{ marginLeft: '10px' }}
+                >
+                  Resume Task
+                </button>
+              )}
+            </>
           )}
           {/* Only show Fill Checklist and Complete Task if user is assigned */}
           {task.status === 'in_progress' && 
@@ -357,12 +465,8 @@ function TaskDetail() {
             boxShadow: '0 4px 6px rgba(0, 123, 255, 0.2)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>
-              <span style={{ fontSize: '32px', marginRight: '15px' }}>📄</span>
               <div>
                 <h3 style={{ margin: 0, color: '#007bff' }}>Download Task Report</h3>
-                <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>
-                  Download report in original template format (Word or Excel)
-                </p>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -388,16 +492,8 @@ function TaskDetail() {
                   console.log('Downloading report for task:', id);
                 }}
               >
-                📥 Download Report
+                Download Report
               </a>
-              <span style={{ color: '#666', fontSize: '14px' }}>
-                Format is chosen by the template (Word or Excel). File saves to your Downloads.
-              </span>
-            </div>
-            <div style={{ marginTop: '15px', padding: '12px', background: '#f8f9fa', borderRadius: '4px' }}>
-              <p style={{ margin: 0, fontSize: '13px', color: '#666' }}>
-                <strong>Note:</strong> Reports are generated from original templates and saved to <code>D:\PJs\ChecksheetsApp\server\reports\</code>
-              </p>
             </div>
             {task.overall_status === 'fail' && (
               <div style={{ 
@@ -407,7 +503,7 @@ function TaskDetail() {
                 borderRadius: '4px',
                 border: '1px solid #ffc107'
               }}>
-                <strong>⚠️ Note:</strong> This task failed. A Corrective Maintenance (CM) task has been automatically created.
+                <strong>Note:</strong> This task failed. A Corrective Maintenance (CM) task has been automatically created.
               </div>
             )}
           </div>
@@ -422,7 +518,7 @@ function TaskDetail() {
             borderRadius: '4px', 
             border: '2px solid #ffc107' 
           }}>
-            <h3 style={{ marginBottom: '15px' }}>⚠️ Task Not Yet Completed</h3>
+            <h3 style={{ marginBottom: '15px' }}>Task Not Yet Completed</h3>
             <p style={{ marginBottom: '15px' }}>
               The checklist has been submitted, but the task is not yet marked as completed. 
               Please complete the task to download the report.
@@ -515,6 +611,60 @@ function TaskDetail() {
           </div>
         </div>
       )}
+
+      {/* Pause Task Modal */}
+      {showPauseModal && (
+        <div className="modal-overlay" onClick={() => setShowPauseModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px', padding: '20px' }}>
+            <div className="modal-header" style={{ marginBottom: '16px', paddingBottom: '12px' }}>
+              <h2 style={{ margin: 0, fontSize: '20px' }}>Pause Task</h2>
+              <button className="modal-close" onClick={() => setShowPauseModal(false)} style={{ fontSize: '24px', width: '28px', height: '28px' }}>×</button>
+            </div>
+            <div style={{ marginBottom: '16px', padding: '10px', background: '#f8f9fa', borderRadius: '4px', fontSize: '12px', color: '#666' }}>
+              <p style={{ margin: 0 }}>Please provide a reason for pausing this task. The super admin will be notified.</p>
+            </div>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              handlePauseTask();
+            }}>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>
+                  Reason for Pausing *
+                </label>
+                <textarea
+                  value={pauseReason}
+                  onChange={(e) => setPauseReason(e.target.value)}
+                  required
+                  placeholder="e.g., Waiting for spare parts, equipment issue, break time..."
+                  rows="4"
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px', resize: 'vertical' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #eee' }}>
+                <button 
+                  type="submit" 
+                  className="btn btn-sm btn-warning" 
+                  style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
+                >
+                  Pause Task
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-sm btn-secondary" 
+                  onClick={() => {
+                    setShowPauseModal(false);
+                    setPauseReason('');
+                  }} 
+                  style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

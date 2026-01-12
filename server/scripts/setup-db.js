@@ -50,13 +50,20 @@ async function setupDatabase() {
 
     // Run migrations
     const migrations = [
+      'create_platform_migrations_table.sql',
+      'create_platform_updates_table.sql',
+      'add_pm_performed_by_to_cm_tasks.sql',
       'add_task_metadata.sql',
       'add_draft_responses.sql',
       'add_draft_images.sql',
       'add_draft_spares_used.sql',
       'add_password_to_users.sql',
       'add_api_tokens_and_webhooks.sql',
-      'add_inventory.sql'
+      'add_inventory.sql',
+      'create_calendar_events_table.sql',
+      'create_licenses_table.sql',
+      'add_task_pause_resume.sql',
+      'add_overtime_requests.sql'
     ];
     
     for (const migrationFile of migrations) {
