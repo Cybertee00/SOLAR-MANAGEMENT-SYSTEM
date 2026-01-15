@@ -97,7 +97,7 @@ async function sendEmail({ to, subject, html, text }) {
 
   // Get sender information
   const from = process.env.EMAIL_FROM || process.env.SMTP_USER || 'noreply@example.com';
-  const fromName = process.env.EMAIL_FROM_NAME || 'Solar O&M Management System';
+  const fromName = process.env.EMAIL_FROM_NAME || 'SPHAiRPlatform';
 
   try {
     const mailOptions = {
@@ -220,7 +220,7 @@ async function sendTaskAssignmentEmail(user, task) {
       <div class="content">
         <p>Hello ${user.full_name || user.username},</p>
         
-        <p>You have been assigned a new task in the Solar O&M Management System.</p>
+        <p>You have been assigned a new task in SPHAiRPlatform.</p>
         
         <div class="task-details">
           <div class="detail-row">
@@ -248,7 +248,7 @@ async function sendTaskAssignmentEmail(user, task) {
         ` : ''}
         
         <div class="footer">
-          <p>This is an automated notification from the Solar O&M Management System.</p>
+          <p>This is an automated notification from SPHAiRPlatform.</p>
           <p>Please do not reply to this email.</p>
         </div>
       </div>
@@ -390,7 +390,7 @@ async function sendTaskReminderEmail(user, task) {
         ` : ''}
         
         <div class="footer">
-          <p>This is an automated reminder from the Solar O&M Management System.</p>
+          <p>This is an automated reminder from SPHAiRPlatform.</p>
           <p>Please do not reply to this email.</p>
         </div>
       </div>

@@ -141,12 +141,7 @@ module.exports = (pool) => {
         }
       }
 
-      // Technicians cannot use spares directly in PM tasks - they must request them
-      if (isTechnician(req) && task.task_type === 'PM' && spares_used && Array.isArray(spares_used) && spares_used.length > 0) {
-        return res.status(403).json({ 
-          error: 'Technicians cannot directly use spares in PM tasks. Please use spare requests instead.' 
-        });
-      }
+      // Spares are now directly selected and automatically deducted - no restrictions
 
       // Parse JSONB fields if they're strings
       let checklistStructure = template.checklist_structure;
@@ -184,12 +179,12 @@ module.exports = (pool) => {
         });
       }
 
-      // Save response with metadata
+      // Save response with metadata and spares_used (for PM tasks, spares are stored but not deducted until CM starts)
       const result = await pool.query(
         `INSERT INTO checklist_responses (
           task_id, checklist_template_id, response_data, submitted_by,
-          maintenance_team, inspected_by, approved_by
-        ) VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING *`,
+          maintenance_team, inspected_by, approved_by, spares_used
+        ) VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8::jsonb) RETURNING *`,
         [
           task_id, 
           checklist_template_id, 
@@ -197,7 +192,8 @@ module.exports = (pool) => {
           submitted_by,
           maintenance_team || null,
           inspected_by || null,
-          approved_by || null
+          approved_by || null,
+          spares_used && Array.isArray(spares_used) ? JSON.stringify(spares_used) : null
         ]
       );
 
@@ -334,13 +330,12 @@ module.exports = (pool) => {
       
       const updatedTask = taskUpdateResult.rows[0];
 
-      // Deduct spares used (if any) and generate a slip
-      // This keeps traceability: inventory_transactions + inventory_slips.
+      // For PM tasks: Store spares_used but don't deduct yet (will be deducted when CM starts)
+      // For CM/PCM/UCM tasks: Deduct spares immediately
       let inventorySlip = null;
-      if (Array.isArray(spares_used) && spares_used.length > 0) {
+      if (Array.isArray(spares_used) && spares_used.length > 0 && task.task_type !== 'PM') {
+        // Only deduct for non-PM tasks (CM/PCM/UCM)
         try {
-          // Call the same logic by directly hitting the consume handler is messy; re-implement minimal call here:
-          // We'll do a lightweight consume using the pool with the same rules as /inventory/consume.
           const { v4: uuidv4 } = require('uuid');
           const client = await pool.connect();
           try {
@@ -437,13 +432,16 @@ module.exports = (pool) => {
               
               const taskCode = `CM-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
               
+              // Get who performed the PM task (submitted_by from this response)
+              const pmPerformedBy = submitted_by || req.session?.userId || null;
+              
               // Create CM task (use PCM as task type, not CM)
               const cmTaskResult = await pool.query(
                 `INSERT INTO tasks (
                   task_code, checklist_template_id, asset_id, task_type, 
-                  status, parent_task_id, scheduled_date
-                ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE) RETURNING *`,
-                [taskCode, cmTemplateId, updatedTask.asset_id, task_id]
+                  status, parent_task_id, scheduled_date, pm_performed_by
+                ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE, $5) RETURNING *`,
+                [taskCode, cmTemplateId, updatedTask.asset_id, task_id, pmPerformedBy]
               );
               
               const cmTask = cmTaskResult.rows[0];

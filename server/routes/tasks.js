@@ -4,7 +4,7 @@ const { mapTaskDataToTemplate } = require('../utils/dataMapper');
 const { generateWordDocument } = require('../utils/wordGenerator');
 const { generateExcelDocument } = require('../utils/excelGenerator');
 const { emitEvent } = require('../utils/webhookEmitter');
-const { notifyTaskAssigned, notifyTaskFlagged, notifyTaskPaused, notifyOvertimeRequest } = require('../utils/notifications');
+const { notifyTaskAssigned, notifyTaskFlagged, notifyOvertimeRequest } = require('../utils/notifications');
 const { isOutsideWorkingHours, formatTime, getWorkingHoursDescription } = require('../utils/overtime');
 const { requireAuth, requireAdmin, requireSuperAdmin, isSuperAdmin, isAdmin } = require('../middleware/auth');
 const { validateCreateTask } = require('../middleware/inputValidation');
@@ -35,7 +35,7 @@ module.exports = (pool) => {
           LEFT JOIN users u ON ta.user_id = u.id
           GROUP BY ta.task_id
         )
-        SELECT t.id, t.task_code, t.checklist_template_id, t.asset_id, t.assigned_to,
+        SELECT t.id, t.task_code, t.checklist_template_id, t.asset_id, t.location, t.assigned_to,
                t.task_type, t.status, t.scheduled_date, t.started_at, t.completed_at,
                t.duration_minutes, t.overall_status, t.parent_task_id, t.created_at, t.updated_at,
                t.hours_worked, t.budgeted_hours, t.is_flagged, t.flag_reason, t.assigned_at,
@@ -83,7 +83,21 @@ module.exports = (pool) => {
       console.log(`[TASKS] User: ${req.session?.username || 'unknown'} (${req.session?.role || 'unknown'}) requesting tasks`);
       console.log(`[TASKS] Query params:`, params);
       
-      const result = await pool.query(query, params);
+      let result;
+      try {
+        result = await pool.query(query, params);
+      } catch (error) {
+        // Check if error is due to missing pause/resume columns
+        if (error.code === '42703' && error.message.includes('is_paused')) {
+          console.error('[TASKS] Database migration required: pause/resume columns missing');
+          console.error('[TASKS] Please run migration: add_task_pause_resume.sql');
+          return res.status(500).json({ 
+            error: 'Database migration required',
+            message: 'The pause/resume columns are missing from the tasks table. Please run the migration: add_task_pause_resume.sql'
+          });
+        }
+        throw error;
+      }
       
       // Parse assigned_users JSON array and ensure status is included
       const tasks = result.rows.map(task => {
@@ -219,7 +233,7 @@ module.exports = (pool) => {
       const taskType = task_type || 'PM';
       
       // Validate task type
-      const validTaskTypes = ['PM', 'PCM', 'UCM'];
+      const validTaskTypes = ['PM', 'PCM', 'UCM', 'INSPECTION'];
       if (!validTaskTypes.includes(taskType)) {
         return res.status(400).json({ error: `task_type must be one of: ${validTaskTypes.join(', ')}` });
       }
@@ -257,13 +271,14 @@ module.exports = (pool) => {
 
       const result = await pool.query(
         `INSERT INTO tasks (
-          task_code, checklist_template_id, asset_id, assigned_to, task_type, scheduled_date, 
+          task_code, checklist_template_id, asset_id, location, assigned_to, task_type, scheduled_date, 
           status, hours_worked, budgeted_hours, assigned_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9) RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10) RETURNING *`,
         [
           task_code, 
           checklist_template_id, 
-          asset_id, 
+          asset_id || null, // Optional - for backward compatibility
+          location || null, // New location field
           primaryAssignedTo, // Keep for backward compatibility
           taskType, 
           finalScheduledDate,
@@ -287,9 +302,13 @@ module.exports = (pool) => {
           );
         }
         
-        // Get asset and all assigned users for notifications
+        // Get asset (if exists) and all assigned users for notifications
+        const assetQuery = asset_id 
+          ? pool.query('SELECT asset_name FROM assets WHERE id = $1', [asset_id])
+          : Promise.resolve({ rows: [] });
+        
         const [assetResult, usersResult] = await Promise.all([
-          pool.query('SELECT asset_name FROM assets WHERE id = $1', [asset_id]),
+          assetQuery,
           pool.query(
             `SELECT id, full_name, username, email FROM users WHERE id = ANY($1::uuid[])`,
             [assignedUserIds]
@@ -297,6 +316,7 @@ module.exports = (pool) => {
         ]);
         
         task.asset_name = assetResult.rows[0]?.asset_name;
+        task.location = location || null; // Include location in task object
         const assignedUsers = usersResult.rows;
         
         // Send notification to all assigned users
@@ -304,7 +324,8 @@ module.exports = (pool) => {
           try {
             await notifyTaskAssigned(pool, {
               ...task,
-              asset_name: task.asset_name,
+              asset_name: task.asset_name || location, // Use location if no asset_name
+              location: location,
               assigned_to: assignedUser.id // For notification function compatibility
             }, assignedUser);
           } catch (notifError) {
@@ -395,24 +416,6 @@ module.exports = (pool) => {
         }
       }
 
-      // For CM tasks generated from PM tasks, check if spare requests are approved
-      if (task.task_type === 'PCM' || task.task_type === 'UCM' || (task.task_type === 'CM' && task.parent_task_id)) {
-        const spareRequestCheck = await pool.query(
-          `SELECT id, status FROM spare_requests 
-           WHERE task_id = $1 AND status IN ('pending', 'rejected')`,
-          [req.params.id]
-        );
-
-        if (spareRequestCheck.rows.length > 0) {
-          const pendingRequests = spareRequestCheck.rows.filter(r => r.status === 'pending');
-          if (pendingRequests.length > 0) {
-            return res.status(400).json({ 
-              error: 'Cannot start CM task: Spare requests must be approved before starting this task',
-              pending_spare_requests: pendingRequests.length
-            });
-          }
-        }
-      }
 
       // Check if starting outside working hours (07:00-16:00)
       const now = new Date();
@@ -464,10 +467,84 @@ module.exports = (pool) => {
           return res.status(400).json({ error: 'Task cannot be started (may already be started or completed)' });
         }
 
+        const startedTask = result.rows[0];
+
+        // If this is a CM task (PCM/UCM) with spares_used from parent PM, deduct them now
+        if ((startedTask.task_type === 'PCM' || startedTask.task_type === 'UCM' || 
+             (startedTask.task_type === 'CM' && startedTask.parent_task_id)) && 
+            startedTask.spares_used) {
+          try {
+            let sparesUsed = startedTask.spares_used;
+            if (typeof sparesUsed === 'string') {
+              sparesUsed = JSON.parse(sparesUsed);
+            }
+            
+            if (Array.isArray(sparesUsed) && sparesUsed.length > 0) {
+              const { v4: uuidv4 } = require('uuid');
+              const slipNo = `SLIP-${Date.now()}-${uuidv4().slice(0, 6).toUpperCase()}`;
+              const slipRes = await client.query(
+                `INSERT INTO inventory_slips (slip_no, task_id, created_by)
+                 VALUES ($1, $2, $3) RETURNING *`,
+                [slipNo, req.params.id, req.session.userId || null]
+              );
+              const slip = slipRes.rows[0];
+
+              const updates = {};
+              for (const line of sparesUsed) {
+                const code = String(line.item_code || '').trim();
+                const qty = parseInt(line.qty_used, 10);
+                if (!code || !Number.isFinite(qty) || qty <= 0) continue;
+
+                const itemRes = await client.query(
+                  'SELECT * FROM inventory_items WHERE item_code = $1 FOR UPDATE',
+                  [code]
+                );
+                if (itemRes.rows.length === 0) continue;
+                const item = itemRes.rows[0];
+                const available = item.actual_qty || 0;
+                if (available - qty < 0) {
+                  console.warn(`Insufficient stock for ${code}: available ${available}, requested ${qty}`);
+                  continue;
+                }
+
+                const newQty = available - qty;
+                await client.query('UPDATE inventory_items SET actual_qty = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newQty, item.id]);
+                await client.query(
+                  `INSERT INTO inventory_slip_lines (slip_id, item_id, item_code_snapshot, item_description_snapshot, qty_used)
+                   VALUES ($1, $2, $3, $4, $5)`,
+                  [slip.id, item.id, item.item_code, item.item_description, qty]
+                );
+                await client.query(
+                  `INSERT INTO inventory_transactions (item_id, task_id, slip_id, tx_type, qty_change, created_by)
+                   VALUES ($1, $2, $3, 'use', $4, $5)`,
+                  [item.id, req.params.id, slip.id, -qty, req.session.userId || null]
+                );
+
+                updates[code] = newQty;
+              }
+
+              // Update Excel Actual Qty (best-effort)
+              if (Object.keys(updates).length > 0) {
+                try {
+                  const { updateActualQtyInExcel } = require('../utils/inventoryExcelSync');
+                  await updateActualQtyInExcel(updates);
+                } catch (e) {
+                  console.error('Error updating Excel:', e);
+                }
+              }
+
+              console.log(`Deducted ${sparesUsed.length} spare(s) from inventory when starting CM task ${startedTask.task_code}`);
+            }
+          } catch (spareError) {
+            console.error('Error deducting spares when starting CM task:', spareError);
+            // Don't fail task start if spare deduction fails, but log it
+          }
+        }
+
         await client.query('COMMIT');
         
         res.json({
-          ...result.rows[0],
+          ...startedTask,
           overtime_request: overtimeRequest ? {
             id: overtimeRequest.id,
             status: overtimeRequest.status,
@@ -824,7 +901,16 @@ async function generateCMTask(pool, pmTaskId, checklistTemplateId, assetId) {
 
     if (templateResult.rows.length === 0) return;
 
-    const cmRules = templateResult.rows[0].cm_generation_rules;
+    let cmRules = templateResult.rows[0].cm_generation_rules;
+    // Parse JSONB if it's a string
+    if (cmRules && typeof cmRules === 'string') {
+      try {
+        cmRules = JSON.parse(cmRules);
+      } catch (e) {
+        console.error('Error parsing cm_generation_rules:', e);
+        return;
+      }
+    }
     if (!cmRules || !cmRules.auto_generate) return;
 
     // Get the PM task details
@@ -861,13 +947,30 @@ async function generateCMTask(pool, pmTaskId, checklistTemplateId, assetId) {
 
     const taskCode = `CM-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
 
-    // Create CM task
+    // Get spares_used from PM task's checklist response (if any)
+    const pmSparesResult = await pool.query(
+      `SELECT spares_used FROM checklist_responses 
+       WHERE task_id = $1 
+       ORDER BY submitted_at DESC 
+       LIMIT 1`,
+      [pmTaskId]
+    );
+    let pmSparesUsed = null;
+    if (pmSparesResult.rows.length > 0 && pmSparesResult.rows[0].spares_used) {
+      pmSparesUsed = pmSparesResult.rows[0].spares_used;
+      // If it's already a JSONB object, stringify it for storage
+      if (typeof pmSparesUsed !== 'string') {
+        pmSparesUsed = JSON.stringify(pmSparesUsed);
+      }
+    }
+
+    // Create CM task with spares_used from PM (stored as JSONB in task metadata)
     const cmTaskResult = await pool.query(
       `INSERT INTO tasks (
         task_code, checklist_template_id, asset_id, task_type, 
-        status, parent_task_id, scheduled_date, pm_performed_by
-      ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE, $5) RETURNING *`,
-      [taskCode, cmTemplateId, assetId, pmTaskId, pmPerformedBy]
+        status, parent_task_id, scheduled_date, pm_performed_by, spares_used
+      ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE, $5, $6::jsonb) RETURNING *`,
+      [taskCode, cmTemplateId, assetId, pmTaskId, pmPerformedBy, pmSparesUsed]
     );
 
     const cmTask = cmTaskResult.rows[0];

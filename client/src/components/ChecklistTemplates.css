@@ -1,0 +1,24 @@
+/* Checklist Templates Component Styles */
+
+/* Reduce size of View Details button */
+.checklist-templates-table .btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  min-height: 32px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+/* Ensure button fits well in table cells */
+.checklist-templates-table td:last-child {
+  white-space: nowrap;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .checklist-templates-table .btn {
+    padding: 6px 12px;
+    font-size: 11px;
+    min-height: 30px;
+  }
+}

@@ -283,6 +283,155 @@ export const deleteDraftResponse = (taskId) => api.delete(`/checklist-responses/
 export const getCMLetters = (params) => api.get('/cm-letters', { params });
 export const getCMLetter = (id) => api.get(`/cm-letters/${id}`);
 export const updateCMLetterStatus = (id, data) => api.patch(`/cm-letters/${id}/status`, data);
+export const updateCMLetterFaultLog = (id, data) => api.patch(`/cm-letters/${id}/fault-log`, data);
+export const getPlantMapData = async () => {
+  try {
+    const response = await axios.get(`${getApiBaseUrl()}/plant/map-data`, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching plant map data:', error);
+    throw error;
+  }
+};
+
+// Get plant map structure from server
+export const getPlantMapStructure = async () => {
+  try {
+    const response = await axios.get(`${getApiBaseUrl()}/plant/structure`, {
+      withCredentials: true,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching plant map structure:', error);
+    throw error;
+  }
+};
+
+// Save plant map structure to server
+export const savePlantMapStructure = async (structure) => {
+  try {
+    const response = await axios.post(`${getApiBaseUrl()}/plant/structure`, 
+      { structure },
+      {
+        withCredentials: true,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error saving plant map structure:', error);
+    throw error;
+  }
+};
+
+// Tracker Status Request API functions
+export const submitTrackerStatusRequest = async (requestData) => {
+  try {
+    const response = await axios.post(
+      `${getApiBaseUrl()}/plant/tracker-status-request`,
+      requestData,
+      { withCredentials: true }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error submitting tracker status request:', error);
+    throw error;
+  }
+};
+
+export const getTrackerStatusRequests = async (status = 'pending') => {
+  try {
+    const response = await axios.get(
+      `${getApiBaseUrl()}/plant/tracker-status-requests?status=${status}`,
+      { withCredentials: true }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching tracker status requests:', error);
+    throw error;
+  }
+};
+
+export const reviewTrackerStatusRequest = async (requestId, action, rejectionReason = null) => {
+  try {
+    const response = await axios.patch(
+      `${getApiBaseUrl()}/plant/tracker-status-request/${requestId}`,
+      { action, rejection_reason: rejectionReason },
+      { withCredentials: true }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error reviewing tracker status request:', error);
+    throw error;
+  }
+};
+
+export const downloadFaultLog = async (period = 'all', params = {}) => {
+  const baseUrl = getApiBaseUrl();
+  let url = `${baseUrl}/cm-letters/fault-log/download?period=${period}`;
+  
+  // Add date filters if provided
+  if (params.startDate) {
+    url += `&startDate=${params.startDate}`;
+  }
+  if (params.endDate) {
+    url += `&endDate=${params.endDate}`;
+  }
+  
+  console.log('[DOWNLOAD] Starting fault log download from:', url);
+  
+  try {
+    // Use fetch with credentials to ensure cookies are sent
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include', // Important: include cookies for authentication
+      headers: {
+        'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    // Get filename from Content-Disposition header or use default
+    const contentDisposition = response.headers.get('Content-Disposition');
+    let filename = `Fault_Log_${period}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+      if (filenameMatch) {
+        filename = filenameMatch[1];
+      }
+    }
+
+    // Get blob and create download link
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+
+    console.log('[DOWNLOAD] Fault log downloaded successfully:', filename);
+    return { success: true, filename };
+  } catch (error) {
+    console.error('[DOWNLOAD] Error downloading fault log:', error);
+    throw error;
+  }
+};
 
 // Inventory
 export const getInventoryItems = (params) => api.get('/inventory/items', { params });
@@ -363,13 +512,6 @@ export const getSparesUsage = (params) => api.get('/inventory/usage', { params }
 export const createInventoryItem = (data) => api.post('/inventory/items', data);
 export const updateInventoryItem = (itemCode, data) => api.put(`/inventory/items/${itemCode}`, data);
 
-// Spare Requests API
-export const getSpareRequests = (params) => api.get('/spare-requests', { params });
-export const getSpareRequest = (id) => api.get(`/spare-requests/${id}`);
-export const createSpareRequest = (data) => api.post('/spare-requests', data);
-export const approveSpareRequest = (id, data) => api.post(`/spare-requests/${id}/approve`, data);
-export const rejectSpareRequest = (id, data) => api.post(`/spare-requests/${id}/reject`, data);
-export const fulfillSpareRequest = (id) => api.post(`/spare-requests/${id}/fulfill`);
 
 // Task Locking API
 export const lockTask = (id, data) => api.patch(`/tasks/${id}/lock`, data);

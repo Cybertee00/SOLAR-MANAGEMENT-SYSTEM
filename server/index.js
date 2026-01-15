@@ -240,13 +240,26 @@ app.use('/api/tasks/:id', validateUUIDParams);
 app.use('/api/assets/:id', validateUUIDParams);
 app.use('/api/checklist-templates/:id', validateUUIDParams);
 app.use('/api/checklist-responses/:id', validateUUIDParams);
-app.use('/api/cm-letters/:id', validateUUIDParams);
+// Apply UUID validation to CM letters routes, but exclude fault-log route
+app.use('/api/cm-letters/:id', (req, res, next) => {
+  // Skip validation for fault-log routes
+  if (req.params.id && req.params.id.includes('fault-log')) {
+    return next();
+  }
+  validateUUIDParams(req, res, next);
+});
 app.use('/api/api-tokens/:id', validateUUIDParams);
 app.use('/api/webhooks/:id', validateUUIDParams);
 app.use('/api/inventory/slips/:id', validateUUIDParams); // Only slips use UUIDs
 // Also apply to nested routes like /api/tasks/:id/start
 app.use('/api/tasks/:id/:action', validateUUIDParams);
-app.use('/api/cm-letters/:id/:action', validateUUIDParams);
+app.use('/api/cm-letters/:id/:action', (req, res, next) => {
+  // Skip validation for fault-log routes
+  if (req.params.id && req.params.id.includes('fault-log')) {
+    return next();
+  }
+  validateUUIDParams(req, res, next);
+});
 app.use('/api/api-tokens/:id/:action', validateUUIDParams);
 app.use('/api/webhooks/:id/:action', validateUUIDParams);
 app.use('/api/users/:id/:action', validateUUIDParams);
@@ -415,6 +428,7 @@ const calendarRoutes = require('./routes/calendar');
 const licenseRoutes = require('./routes/license');
 const syncRoutes = require('./routes/sync');
 const overtimeRequestsRoutes = require('./routes/overtimeRequests');
+const plantRoutes = require('./routes/plant');
 
 // Swagger (OpenAPI) docs
 const swaggerUi = require('swagger-ui-express');
@@ -456,7 +470,6 @@ app.use('/api/upload', licenseCheck, uploadRoutes(pool));
 app.use('/api/api-tokens', licenseCheck, apiTokensRoutes(pool));
 app.use('/api/webhooks', licenseCheck, webhooksRoutes(pool));
 app.use('/api/inventory', licenseCheck, inventoryRoutes(pool));
-app.use('/api/spare-requests', licenseCheck, require('./routes/spareRequests')(pool));
 app.use('/api/early-completion-requests', licenseCheck, earlyCompletionRequestsRoutes(pool));
 app.use('/api/notifications', licenseCheck, notificationsRoutes(pool));
 app.use('/api/platform', licenseCheck, platformRoutes(pool));
@@ -464,6 +477,7 @@ app.use('/api/calendar', licenseCheck, calendarRoutes(pool));
 app.use('/api/license', licenseRoutes(pool));
 app.use('/api', syncRoutes(pool));
 app.use('/api/overtime-requests', licenseCheck, overtimeRequestsRoutes(pool));
+app.use('/api/plant', licenseCheck, plantRoutes(pool));
 
 // Versioned API (v1) - mirrors /api for integration stability
 app.use('/api/v1/auth', authRoutes(pool));

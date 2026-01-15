@@ -3,10 +3,42 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .page-header h1 {
   margin: 0;
+}
+
+/* Add User Button - Reduced size */
+.add-user-btn {
+  padding: 8px 16px !important;
+  font-size: 13px !important;
+  min-height: 36px !important;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .page-header h1 {
+    width: 100%;
+  }
+
+  .add-user-btn {
+    padding: 8px 14px !important;
+    font-size: 12px !important;
+    min-height: 34px !important;
+    width: 100%;
+    max-width: 200px;
+    align-self: flex-end;
+  }
 }
 
 .form-card {
@@ -42,6 +74,20 @@
   padding: 12px;
   text-align: left;
   border-bottom: 1px solid #e0e0e0;
+}
+
+/* Action column - ensure buttons stay horizontal */
+.users-table td:last-child {
+  white-space: nowrap;
+}
+
+.users-table td:last-child > div {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
 }
 
 .roles-checkboxes {
@@ -100,11 +146,12 @@
 
 .badge {
   display: inline-block;
-  padding: 4px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
+  line-height: 1.4;
 }
 
 .badge-admin {
@@ -185,13 +232,231 @@
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
+/* Mobile-friendly card layout */
 @media (max-width: 768px) {
   .table-responsive {
-    overflow-x: scroll;
+    overflow-x: visible;
   }
 
-  .users-table {
-    min-width: 800px;
+  .users-table,
+  .users-table thead,
+  .users-table tbody,
+  .users-table th,
+  .users-table td,
+  .users-table tr {
+    display: block;
+  }
+
+  .users-table thead tr {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+  }
+
+  .users-table tr {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    padding: 0;
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+
+  .users-table td {
+    border: none;
+    border-bottom: 1px solid #eee;
+    position: relative;
+    padding: 12px 16px;
+    text-align: left;
+    word-wrap: break-word;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 44px;
+  }
+
+  .users-table td:last-child {
+    border-bottom: none;
+  }
+
+  .users-table td:before {
+    content: attr(data-label);
+    display: block;
+    font-weight: 600;
+    color: #666;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex: 0 0 110px;
+    min-width: 110px;
+    max-width: 110px;
+    line-height: 1.4;
+    text-align: left;
+  }
+
+  .users-table td[data-label=""]:before {
+    content: '';
+    display: none;
+    flex: none;
+  }
+
+  /* Special handling for avatar column */
+  .users-table td:first-child {
+    padding: 16px;
+    text-align: center;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .users-table td:first-child:before {
+    display: none;
+    flex: none;
+  }
+
+  .users-table td:first-child .user-avatar-cell {
+    justify-content: center;
+    width: auto;
+    margin: 0;
+    display: flex;
+  }
+
+  /* Ensure content in cells appears on the right side */
+  .users-table td > span:not(.badge),
+  .users-table td > div:not(.user-avatar-cell):not(.roles-badges) {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 1;
+    text-align: right;
+    word-break: break-word;
+    min-width: 0;
+    padding-left: 8px;
+  }
+
+  .users-table td:first-child > * {
+    flex: none;
+    padding-left: 0;
+  }
+
+  /* Text content alignment - right align all values */
+  .users-table td > span {
+    text-align: right;
+    justify-content: flex-end;
+  }
+
+  /* Status and role badges - align right */
+  .users-table td > span > .badge,
+  .users-table td > div > .badge {
+    margin: 0;
+  }
+
+  /* Special handling for action column */
+  .users-table td:last-child {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .users-table td:last-child:before {
+    display: block;
+    flex: 0 0 110px;
+    min-width: 110px;
+    max-width: 110px;
+    text-align: left;
+    flex-shrink: 0;
+  }
+
+  /* Action buttons container on mobile */
+  .users-table td:last-child > div {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    flex: 1;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    margin-top: 0;
+  }
+
+  .users-table td:last-child > div > .btn {
+    flex: 0 0 auto;
+    min-width: 90px;
+    max-width: 130px;
+    margin: 0;
+    padding: 4px 10px !important;
+    font-size: 11px !important;
+    min-height: 30px !important;
+  }
+
+  /* Make badges wrap nicely on mobile - align right */
+  .roles-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .users-table td .roles-badges {
+    width: auto;
+    max-width: 100%;
+    padding-left: 8px;
+  }
+
+  /* Badge styling on mobile - smaller size */
+  .users-table td .badge {
+    display: inline-block;
+    margin: 0 2px 0 0;
+    white-space: nowrap;
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
+
+  /* Text content styling - align right with proper spacing */
+  .users-table td > span:not(.badge) {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 1;
+    text-align: right;
+    word-break: break-word;
+    line-height: 1.5;
+    min-width: 0;
+    padding-left: 8px;
+  }
+
+  /* Status and role badges container - align right */
+  .users-table td > span > .badge,
+  .users-table td > div > .badge {
+    margin: 0;
+  }
+
+  /* Ensure nested divs align properly */
+  .users-table td .user-avatar-cell {
+    flex: none;
+    padding-left: 0;
+  }
+
+  .users-table td .roles-badges {
+    justify-content: flex-end;
+    margin: 0;
+  }
+
+  /* Last login and other text - right align */
+  .users-table td:nth-child(7) > span {
+    text-align: right;
+    justify-content: flex-end;
   }
 }
 

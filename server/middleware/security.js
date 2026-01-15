@@ -78,6 +78,44 @@ const securityHeaders = helmet({
 function validateUUIDParams(req, res, next) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   
+  // Skip validation for specific routes that don't use UUIDs
+  // Profile routes use paths like /profile/me/avatar, not UUIDs
+  // Fault log download route uses /fault-log/download, not UUIDs
+  // Check both the path and the id parameter to catch these routes
+  const path = req.path || '';
+  const originalUrl = req.originalUrl || req.url || '';
+  const idParam = req.params.id || '';
+  
+  // Skip if this is a profile route (check path, URL, or if id param is "profile")
+  // When Express matches /api/users/:id to /api/users/profile/me/avatar, 
+  // it sets req.params.id = 'profile', so we check for that
+  if (path.includes('/profile/me') || 
+      path.includes('/profile/') || 
+      path.startsWith('/profile') ||
+      originalUrl.includes('/profile/me') ||
+      originalUrl.includes('/profile/') ||
+      originalUrl.includes('/api/users/profile') ||
+      idParam === 'profile') {
+    return next();
+  }
+  
+  // Skip if this is a fault-log download route
+  // Check multiple ways to catch this route before UUID validation
+  // The route is /api/cm-letters/fault-log/download
+  const isFaultLogRoute = 
+    path.includes('/fault-log') || 
+    originalUrl.includes('/fault-log') ||
+    originalUrl.includes('/cm-letters/fault-log') ||
+    originalUrl.match(/\/cm-letters\/fault-log/) ||
+    idParam === 'fault-log' ||
+    idParam === 'fault-log/download' ||
+    (idParam && idParam.startsWith('fault-log'));
+  
+  if (isFaultLogRoute) {
+    console.log('[UUID VALIDATION] Skipping validation for fault-log route:', { path, originalUrl, idParam });
+    return next();
+  }
+  
   // Check params that should be UUIDs (id parameter)
   // Only validate 'id' parameter, not other params like 'action', 'filename', etc.
   if (req.params.id) {
@@ -99,8 +137,15 @@ function validateUUIDParams(req, res, next) {
 /**
  * Sanitize request body to prevent NoSQL injection and other attacks
  * Removes dangerous characters and normalizes data types
+ * Skip multipart/form-data requests (handled by multer, not body parser)
  */
 function sanitizeRequestBody(req, res, next) {
+  // Skip sanitization for multipart/form-data (file uploads) - these are handled by multer
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    return next();
+  }
+  
   if (req.body && typeof req.body === 'object') {
     // Recursively sanitize object
     req.body = sanitizeObject(req.body);

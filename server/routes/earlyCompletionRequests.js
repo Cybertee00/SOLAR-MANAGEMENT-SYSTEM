@@ -111,8 +111,13 @@ module.exports = (pool) => {
 
       // Check if scheduled date is in the future
       if (task.scheduled_date) {
-        const today = new Date().toISOString().split('T')[0];
-        const scheduledDate = new Date(task.scheduled_date).toISOString().split('T')[0];
+        // Use local date formatting to avoid timezone shift
+        const formatLocalDate = (d) => {
+          const date = new Date(d);
+          return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        };
+        const today = formatLocalDate(new Date());
+        const scheduledDate = formatLocalDate(task.scheduled_date);
         
         if (today >= scheduledDate) {
           return res.status(400).json({ error: 'Task scheduled date has already passed or is today' });

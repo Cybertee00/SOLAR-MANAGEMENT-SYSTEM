@@ -63,7 +63,9 @@ async function setupDatabase() {
       'create_calendar_events_table.sql',
       'create_licenses_table.sql',
       'add_task_pause_resume.sql',
-      'add_overtime_requests.sql'
+      'add_overtime_requests.sql',
+      'add_spares_used_to_tasks_and_responses.sql',
+      'add_fault_log_fields_to_cm_letters.sql'
     ];
     
     for (const migrationFile of migrations) {

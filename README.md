@@ -96,14 +96,60 @@ The system displays a status indicator at the top of the screen showing:
 
 ## Features
 
+### Core Functionality
 - **Dynamic Checklist Engine**: No hard-coded checklist fields - all checklists are defined in the database
-- **Asset-Centric Design**: All tasks are tied to specific assets
+- **Location-Based Tasks**: Tasks are created with location information instead of asset-specific assignments
 - **Backend-Driven Validation**: Pass/fail logic is enforced on the server, not in the UI
 - **Automatic CM Generation**: Failed PM tasks automatically generate CM tasks and letters
 - **Audit Trails**: Complete tracking of who performed tasks, when, and results
-- **Task Identification**: Clear identification of task type (PM/CM) and asset type in the UI
-- **Single-Device-Per-Session Security**: Users can only access the application from one device at a time. When logging in from a new device, the previous session is automatically invalidated, enhancing security and ensuring accountability
-- **Overtime Work Acknowledgement**: Automatic detection and tracking of work performed outside normal working hours (07:00-16:00). When users start or complete tasks outside working hours, overtime requests are automatically created and sent to super admins for acknowledgement, providing proof of extra hours worked
+- **Task Management**: Separate pages for PM (Preventive Maintenance) and Inspection tasks
+- **Multiple Checklist Templates**: 13 pre-configured templates covering various maintenance activities
+
+### Plant Management
+- **Interactive Plant Map**: Visual representation of the solar plant with tracker blocks
+- **Dual View Modes**: Switch between Grass Cutting and Panel Wash views
+- **Tracker Status Tracking**: Multi-select trackers and submit status requests (Done/Halfway)
+- **Admin Approval Workflow**: Tracker status changes require admin/superadmin approval
+- **Progress Tracking**: Real-time progress bars showing completion percentage for each work type
+- **Visual Status Indicators**: Color-coded tracker blocks (White=Not Done, Green=Done, Orange=Halfway)
+
+### Inventory Management
+- **Spare Parts Tracking**: Complete inventory management with minimum level alerts
+- **Section-Based Organization**: Items organized by location/section with visual indicators
+- **Low Stock Warnings**: Blinking caution icons for items below minimum quantity
+- **Spares Usage Tracking**: Date-range filtered usage reports
+- **Stock Level Monitoring**: Visual highlighting for items at minimum or below minimum levels
+
+### Calendar & Scheduling
+- **Year Calendar View**: Complete annual view of all scheduled tasks
+- **Task Frequency Support**: Daily, Weekly, Monthly, Quarterly, Bi-Monthly, and Annual frequencies
+- **Outstanding Tasks Highlighting**: Visual indicators for overdue or outstanding tasks
+- **Calendar Event Management**: Automatic generation and tracking of scheduled maintenance
+
+### CM Letters & Reporting
+- **Automated CM Letter Generation**: Automatic creation of corrective maintenance letters from failed PMs
+- **Fault Log Reports**: Comprehensive fault log generation with date range filtering
+- **Report Downloads**: Excel-based reports with proper formatting and data mapping
+- **CM Letter Status Tracking**: Track CM letters from open to resolved status
+
+### Notifications System
+- **Real-Time Notifications**: In-app notification system for important events
+- **Admin Review Interface**: Admins can review and approve/reject tracker status requests
+- **Overtime Request Notifications**: Automatic notifications for overtime work acknowledgement
+- **Task Assignment Notifications**: Notifications for task assignments and updates
+
+### User Management & Security
+- **Role-Based Access Control**: Technician, Supervisor, Admin, and Super Admin roles
+- **Single-Device-Per-Session Security**: Users can only access from one device at a time
+- **Password Management**: Forced password change on first login
+- **User Profile Management**: Complete user profile and account management
+- **License Management**: System-wide license control and validation
+
+### Offline Support
+- **Offline Task Management**: Start, pause, resume, and complete tasks offline
+- **Offline Checklist Submission**: Submit checklist responses without internet
+- **Automatic Sync**: All offline operations sync when connection is restored
+- **Visual Offline Indicators**: Clear status indicators for connection and sync state
 
 ## Tech Stack
 
@@ -225,28 +271,39 @@ ChecksheetsApp/
 - **checklist_responses**: Submitted checklist data
 - **cm_letters**: Corrective maintenance letters
 
-## Weather Station Checklist (MVP)
+## Checklist Templates
 
-The application starts with one checklist template: **Weather Station Preventive Maintenance** (WS-PM-001).
+The system includes 13 pre-configured checklist templates covering various maintenance activities:
 
-The checklist includes:
-- Visual Inspection (3 items)
-- Sensor Functionality (5 sensors)
-- Data Logging (3 items)
-- Calibration (2 items)
-- Remarks (1 item)
+1. **CC-PM-004** - Concentrated Cabinet Inspection (Monthly)
+2. **CCTV-PM-ANNUAL** - CCTV Annual Inspection
+3. **CCTV-PM-MONTHLY** - CCTV Monthly Inspection
+4. **CT-MV-PM-008** - CT MV Inspection (Monthly)
+5. **EM-PM-014** - Energy Meter Inspection (Monthly)
+6. **INV-PM-006** - Inverter Inspection (Monthly)
+7. **SCADA-STRINGS-PM-003** - SCADA Strings Monitoring (Weekly)
+8. **SCADA-TRACKERS-PM-005** - SCADA Trackers Monitoring (Weekly)
+9. **SCB-PM-003** - String Combiner Box Inspection (Bi-Monthly)
+10. **SUB-BATTERIES-PM-021** - Substation Batteries Inspection (Monthly)
+11. **SUB-PM-020** - Substation Inspection (Monthly)
+12. **TRACKER-PM-005** - Tracker Inspection (Quarterly)
+13. **VENT-PM-009** - Ventilation Inspection (Weekly)
+
+All templates are automatically imported from Excel files in `server/templates/excel/` and can be updated using the template update script.
 
 ## Usage
 
 ### Creating a Task
 
-1. Navigate to **Tasks** page
+1. Navigate to **Tasks** → **PM** or **Tasks** → **Inspection**
 2. Click **Create New Task**
-3. Select:
-   - Checklist Template (e.g., Weather Station PM)
-   - Asset (e.g., Weather Station 1)
+3. Fill in:
+   - Checklist Template (select from available templates)
+   - Location (text input for task location)
+   - Assigned Users (can assign to multiple users)
    - Task Type (PM or CM)
    - Scheduled Date
+   - Budgeted Hours (optional, Super Admin only)
 
 ### Executing a Task
 
@@ -324,6 +381,25 @@ SPHAiRPlatform implements **single-device-per-session** security to enhance appl
 ### CM Letters
 - `GET /api/cm-letters` - List CM letters
 - `PATCH /api/cm-letters/:id/status` - Update CM letter status
+- `GET /api/cm-letters/fault-log/download` - Download fault log report (with date range filtering)
+
+### Plant Map
+- `GET /api/plant/structure` - Get plant map structure
+- `POST /api/plant/structure` - Save plant map structure
+- `POST /api/plant/tracker-status-request` - Submit tracker status request (requires admin approval)
+- `GET /api/plant/tracker-status-requests` - Get tracker status requests (admin only)
+- `PATCH /api/plant/tracker-status-request/:id` - Approve/reject tracker status request (admin only)
+
+### Inventory
+- `GET /api/inventory/items` - Get inventory items
+- `GET /api/inventory/spares-usage` - Get spares usage (with date range filtering)
+- `POST /api/inventory/update` - Update inventory quantities
+
+### Notifications
+- `GET /api/notifications` - Get user notifications
+- `GET /api/notifications/unread-count` - Get unread notification count
+- `PATCH /api/notifications/:id/read` - Mark notification as read
+- `PATCH /api/notifications/read-all` - Mark all notifications as read
 
 See individual route files for complete API documentation.
 
@@ -356,14 +432,38 @@ npm start  # React development server with hot reload
 After running `setup-db`, you'll have:
 
 - **Users**:
-  - admin / admin@solarom.com (admin role)
-  - tech1 / tech1@solarom.com (technician role)
-
-- **Assets**:
-  - WS-001: Weather Station 1
+  - admin / admin@solarom.com (admin role, password: tech1)
+  - tech1 / tech1@solarom.com (technician role, password: tech123)
 
 - **Checklist Templates**:
-  - WS-PM-001: Weather Station Preventive Maintenance
+  - 13 pre-configured templates (see Checklist Templates section above)
+  - Templates are automatically imported from `server/templates/excel/`
+
+## Template Management
+
+### Updating Templates
+
+To update all checklist templates from Excel files:
+
+```bash
+cd server
+node scripts/update-all-excel-templates.js
+```
+
+This script:
+- Reads all `.xlsx` files from `server/templates/excel/`
+- Extracts template codes (e.g., EM-PM-014) and frequencies from the files
+- Updates or inserts templates in the database
+- Maintains proper template code format: `{PREFIX}-PM-{NUMBER}`
+
+### Cleaning Up Old Templates
+
+To remove templates that are no longer in the Excel folder:
+
+```bash
+cd server
+node scripts/cleanup-old-templates.js
+```
 
 ## Next Steps
 

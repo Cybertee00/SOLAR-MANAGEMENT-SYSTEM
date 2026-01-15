@@ -1,4 +1,5 @@
 const express = require('express');
+const { generateFaultLogExcel } = require('../utils/faultLogGenerator');
 
 module.exports = (pool) => {
   const router = express.Router();
@@ -6,7 +7,7 @@ module.exports = (pool) => {
   // Get all CM letters
   router.get('/', async (req, res) => {
     try {
-      const { status, task_id } = req.query;
+      const { status, task_id, startDate, endDate } = req.query;
       let query = `
         SELECT cm.*, 
                t.task_code,
@@ -18,6 +19,7 @@ module.exports = (pool) => {
         LEFT JOIN tasks pt ON cm.parent_pm_task_id = pt.id
         WHERE 1=1
       `;
+      // Note: cm.* includes images and action_taken fields from fault log
       const params = [];
       let paramCount = 1;
 
@@ -29,6 +31,14 @@ module.exports = (pool) => {
         query += ` AND cm.task_id = $${paramCount++}`;
         params.push(task_id);
       }
+      if (startDate) {
+        query += ` AND DATE(cm.generated_at) >= $${paramCount++}`;
+        params.push(startDate);
+      }
+      if (endDate) {
+        query += ` AND DATE(cm.generated_at) <= $${paramCount++}`;
+        params.push(endDate);
+      }
 
       query += ' ORDER BY cm.generated_at DESC';
 
@@ -37,6 +47,98 @@ module.exports = (pool) => {
     } catch (error) {
       console.error('Error fetching CM letters:', error);
       res.status(500).json({ error: 'Failed to fetch CM letters' });
+    }
+  });
+
+  // Download Fault Log Report (Excel) - MUST be before /:id route
+  router.get('/fault-log/download', async (req, res) => {
+    try {
+      const { period = 'custom', startDate, endDate } = req.query;
+
+      // Validate period - accept 'custom' as valid
+      const validPeriods = ['all', 'weekly', 'monthly', 'yearly', 'custom'];
+      console.log(`[FAULT LOG DOWNLOAD] Received period: "${period}", startDate: "${startDate}", endDate: "${endDate}"`);
+      
+      if (period && !validPeriods.includes(period)) {
+        console.log(`[FAULT LOG DOWNLOAD] Invalid period: "${period}". Valid periods: ${validPeriods.join(', ')}`);
+        return res.status(400).json({ 
+          error: 'Invalid period', 
+          message: `Period must be one of: ${validPeriods.join(', ')}` 
+        });
+      }
+      
+      console.log(`[FAULT LOG DOWNLOAD] Period validation passed: "${period}"`);
+
+      // Validate that dates are provided for custom period
+      if (period === 'custom' && (!startDate || !endDate)) {
+        return res.status(400).json({ 
+          error: 'Missing date range', 
+          message: 'Both startDate and endDate are required for custom period' 
+        });
+      }
+
+      // Parse dates if provided
+      let startDateObj = null;
+      let endDateObj = null;
+      if (startDate) {
+        startDateObj = new Date(startDate);
+        if (isNaN(startDateObj.getTime())) {
+          return res.status(400).json({ error: 'Invalid startDate format' });
+        }
+        // Set to start of day
+        startDateObj.setHours(0, 0, 0, 0);
+      }
+      if (endDate) {
+        endDateObj = new Date(endDate);
+        if (isNaN(endDateObj.getTime())) {
+          return res.status(400).json({ error: 'Invalid endDate format' });
+        }
+        // Set to end of day
+        endDateObj.setHours(23, 59, 59, 999);
+      }
+
+      // Validate date range
+      if (startDateObj && endDateObj && startDateObj > endDateObj) {
+        return res.status(400).json({ 
+          error: 'Invalid date range', 
+          message: 'Start date must be before or equal to end date' 
+        });
+      }
+
+      // Generate Excel
+      const buffer = await generateFaultLogExcel(pool, {
+        period: period === 'custom' ? 'all' : period, // Use 'all' for custom to let date filtering handle it
+        startDate: startDateObj,
+        endDate: endDateObj
+      });
+
+      // Generate filename with date range
+      let filename;
+      if (startDate && endDate) {
+        const startStr = startDate.replace(/-/g, '');
+        const endStr = endDate.replace(/-/g, '');
+        filename = `Fault_Log_${startStr}_to_${endStr}.xlsx`;
+      } else {
+        const periodLabel = period === 'all' ? 'All' : period.charAt(0).toUpperCase() + period.slice(1);
+        const dateStr = new Date().toISOString().split('T')[0];
+        filename = `Fault_Log_${periodLabel}_${dateStr}.xlsx`;
+      }
+
+      // Set headers
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', buffer.length);
+
+      // Send buffer
+      res.send(buffer);
+    } catch (error) {
+      console.error('Error generating fault log report:', error);
+      console.error('Error stack:', error.stack);
+      res.status(500).json({ 
+        error: 'Failed to generate fault log report', 
+        message: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   });
 
@@ -165,6 +267,148 @@ module.exports = (pool) => {
     } catch (error) {
       console.error('Error updating CM letter:', error);
       res.status(500).json({ error: 'Failed to update CM letter' });
+    }
+  });
+
+  // Update CM letter fault log data
+  router.patch('/:id/fault-log', async (req, res) => {
+    try {
+      const {
+        reported_by,
+        plant,
+        fault_description,
+        affected_plant_functionality,
+        main_affected_item,
+        production_affected,
+        affected_item_line,
+        affected_item_cabinet,
+        affected_item_inverter,
+        affected_item_comb_box,
+        affected_item_bb_tracker,
+        code_error,
+        failure_cause,
+        action_taken
+      } = req.body;
+
+      // First, check if the fault log columns exist
+      const columnCheck = await pool.query(`
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'cm_letters' 
+        AND column_name IN (
+          'reported_by', 'plant', 'fault_description', 'affected_plant_functionality',
+          'main_affected_item', 'production_affected', 'affected_item_line',
+          'affected_item_cabinet', 'affected_item_inverter', 'affected_item_comb_box',
+          'affected_item_bb_tracker', 'code_error', 'failure_cause', 'action_taken'
+        )
+      `);
+      
+      const existingColumns = new Set(columnCheck.rows.map(r => r.column_name));
+      
+      // If no fault log columns exist, return helpful error
+      if (existingColumns.size === 0) {
+        return res.status(500).json({ 
+          error: 'Fault log columns not found',
+          message: 'The database migration for fault log fields has not been run yet. Please run: node server/scripts/run-migration.js add_fault_log_fields_to_cm_letters.sql',
+          migrationFile: 'add_fault_log_fields_to_cm_letters.sql'
+        });
+      }
+
+      const updateFields = [];
+      const params = [];
+      let paramCount = 1;
+
+      // Build dynamic update query - only include fields that exist in the database
+      if (reported_by !== undefined && existingColumns.has('reported_by')) {
+        updateFields.push(`reported_by = $${paramCount++}`);
+        params.push(reported_by || null);
+      }
+      if (plant !== undefined && existingColumns.has('plant')) {
+        updateFields.push(`plant = $${paramCount++}`);
+        params.push(plant);
+      }
+      if (fault_description !== undefined && existingColumns.has('fault_description')) {
+        updateFields.push(`fault_description = $${paramCount++}`);
+        params.push(fault_description);
+      }
+      if (affected_plant_functionality !== undefined && existingColumns.has('affected_plant_functionality')) {
+        updateFields.push(`affected_plant_functionality = $${paramCount++}`);
+        params.push(affected_plant_functionality);
+      }
+      if (main_affected_item !== undefined && existingColumns.has('main_affected_item')) {
+        updateFields.push(`main_affected_item = $${paramCount++}`);
+        params.push(main_affected_item);
+      }
+      if (production_affected !== undefined && existingColumns.has('production_affected')) {
+        updateFields.push(`production_affected = $${paramCount++}`);
+        params.push(production_affected);
+      }
+      if (affected_item_line !== undefined && existingColumns.has('affected_item_line')) {
+        updateFields.push(`affected_item_line = $${paramCount++}`);
+        params.push(affected_item_line);
+      }
+      if (affected_item_cabinet !== undefined && existingColumns.has('affected_item_cabinet')) {
+        updateFields.push(`affected_item_cabinet = $${paramCount++}`);
+        params.push(affected_item_cabinet);
+      }
+      if (affected_item_inverter !== undefined && existingColumns.has('affected_item_inverter')) {
+        updateFields.push(`affected_item_inverter = $${paramCount++}`);
+        params.push(affected_item_inverter);
+      }
+      if (affected_item_comb_box !== undefined && existingColumns.has('affected_item_comb_box')) {
+        updateFields.push(`affected_item_comb_box = $${paramCount++}`);
+        params.push(affected_item_comb_box);
+      }
+      if (affected_item_bb_tracker !== undefined && existingColumns.has('affected_item_bb_tracker')) {
+        updateFields.push(`affected_item_bb_tracker = $${paramCount++}`);
+        params.push(affected_item_bb_tracker);
+      }
+      if (code_error !== undefined && existingColumns.has('code_error')) {
+        updateFields.push(`code_error = $${paramCount++}`);
+        params.push(code_error);
+      }
+      if (failure_cause !== undefined && existingColumns.has('failure_cause')) {
+        updateFields.push(`failure_cause = $${paramCount++}`);
+        params.push(failure_cause);
+      }
+      if (action_taken !== undefined && existingColumns.has('action_taken')) {
+        updateFields.push(`action_taken = $${paramCount++}`);
+        params.push(action_taken);
+      }
+
+      if (updateFields.length === 0) {
+        return res.status(400).json({ error: 'No fields to update or columns do not exist' });
+      }
+
+      params.push(req.params.id);
+      updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+
+      const result = await pool.query(
+        `UPDATE cm_letters 
+         SET ${updateFields.join(', ')}
+         WHERE id = $${paramCount} 
+         RETURNING *`,
+        params
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'CM letter not found' });
+      }
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error('Error updating CM letter fault log:', error);
+      
+      // Provide helpful error message if columns don't exist
+      if (error.code === '42703') {
+        return res.status(500).json({ 
+          error: 'Database column not found',
+          message: 'The database migration for fault log fields has not been run yet. Please run the migration: add_fault_log_fields_to_cm_letters.sql',
+          migrationFile: 'add_fault_log_fields_to_cm_letters.sql',
+          details: error.message
+        });
+      }
+      
+      res.status(500).json({ error: 'Failed to update CM letter fault log', message: error.message });
     }
   });
 

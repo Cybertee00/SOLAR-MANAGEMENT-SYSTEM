@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "nodemon index.js",
     "start": "node index.js",
-    "setup-db": "node scripts/setup-db.js"
+    "setup-db": "node scripts/setup-db.js",
+    "import-templates": "node scripts/import-excel-templates.js",
+    "import-calendar": "node scripts/import-calendar-events.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -26,6 +28,7 @@
     "nodemailer": "^7.0.12",
     "pg": "^8.11.3",
     "pizzip": "^3.2.0",
+    "redis": "^4.7.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^9.0.1"

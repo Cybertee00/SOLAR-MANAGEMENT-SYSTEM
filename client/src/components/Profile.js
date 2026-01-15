@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getProfile, updateProfile, uploadProfileImage } from '../api/api';
+import { getProfile, updateProfile, uploadProfileImage, removeProfileImage } from '../api/api';
 import { getApiBaseUrl } from '../api/api';
 import './Profile.css';
 
@@ -43,14 +43,27 @@ function Profile() {
   
   const [roles, setRoles] = useState(getUserRoles());
   
+  // Get default profile image path
+  const getDefaultProfileImage = () => {
+    const baseUrl = getApiBaseUrl().replace('/api', '');
+    return `${baseUrl}/uploads/profiles/No_Profile.png`;
+  };
+
+  // Check if image is the default profile image
+  const isDefaultImage = (imagePath) => {
+    if (!imagePath) return true;
+    return imagePath.includes('No_Profile.png') || imagePath.includes('No_Profile');
+  };
+
   // Set profile image from user context
   const [profileImage, setProfileImage] = useState(user?.profile_image || null);
   const [imagePreview, setImagePreview] = useState(() => {
-    if (user?.profile_image) {
+    if (user?.profile_image && !isDefaultImage(user.profile_image)) {
       const baseUrl = getApiBaseUrl().replace('/api', '');
       return `${baseUrl}${user.profile_image}`;
     }
-    return null;
+    // Show default image if no profile image or if it's the default
+    return getDefaultProfileImage();
   });
   
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -96,13 +109,14 @@ function Profile() {
         setRoles(userRoles);
         
         // Update profile image
-        if (data.profile_image) {
+        if (data.profile_image && !isDefaultImage(data.profile_image)) {
           const baseUrl = getApiBaseUrl().replace('/api', '');
           setProfileImage(data.profile_image);
           setImagePreview(`${baseUrl}${data.profile_image}`);
         } else {
+          // Use default image if no profile image or if it's the default
           setProfileImage(null);
-          setImagePreview(null);
+          setImagePreview(getDefaultProfileImage());
         }
         
         // Update user context with fresh data
@@ -224,13 +238,13 @@ function Profile() {
     // Validate file type
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
-      setError('Please select a valid image file (JPEG, PNG, GIF, or WebP)');
+      setError('Invalid file format. Supported formats: JPEG, PNG, GIF, WebP. Max size: 5MB.');
       return;
     }
     
     // Validate file size (5MB)
     if (file.size > 5 * 1024 * 1024) {
-      setError('Image size must be less than 5MB');
+      setError('File size too large. Max size: 5MB. Supported formats: JPEG, PNG, GIF, WebP.');
       return;
     }
     
@@ -283,7 +297,45 @@ function Profile() {
                           error.message || 
                           'Failed to upload image. Please try again.';
       setError(errorMessage);
-      setImagePreview(null);
+      setImagePreview(getDefaultProfileImage());
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleRemoveImage = async () => {
+    if (!window.confirm('Are you sure you want to remove your profile image?')) {
+      return;
+    }
+
+    try {
+      setUploadingImage(true);
+      setError('');
+      
+      const response = await removeProfileImage();
+      console.log('[PROFILE] Remove response:', response.data);
+      
+      // Clear profile image and show default
+      setProfileImage(null);
+      setImagePreview(getDefaultProfileImage());
+      
+      // Update user context
+      if (setUser) {
+        setUser({
+          ...user,
+          profile_image: null
+        });
+      }
+      
+      setSuccess('Profile image removed successfully!');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (error) {
+      console.error('[PROFILE] Error removing image:', error);
+      const errorMessage = error.response?.data?.error || 
+                          error.response?.data?.details || 
+                          error.message || 
+                          'Failed to remove image. Please try again.';
+      setError(errorMessage);
     } finally {
       setUploadingImage(false);
     }
@@ -345,33 +397,50 @@ function Profile() {
           <h2>Profile Picture</h2>
           <div className="profile-image-section">
             <div className="profile-image-container">
-              {imagePreview ? (
-                <img 
-                  src={imagePreview} 
-                  alt="Profile" 
-                  className="profile-image"
-                  onError={(e) => {
-                    e.target.src = 'https://via.placeholder.com/150?text=No+Image';
-                  }}
-                />
-              ) : (
-                <div className="profile-image-placeholder">
-                  <span>{profileData.firstName?.[0]?.toUpperCase() || profileData.username?.[0]?.toUpperCase() || 'U'}</span>
-                </div>
-              )}
+              <img 
+                src={imagePreview || getDefaultProfileImage()} 
+                alt="Profile" 
+                className="profile-image"
+                onError={(e) => {
+                  e.target.src = getDefaultProfileImage();
+                }}
+              />
             </div>
             <div className="profile-image-actions">
-              <label className="btn btn-primary" style={{ cursor: uploadingImage ? 'not-allowed' : 'pointer', opacity: uploadingImage ? 0.6 : 1 }}>
-                {uploadingImage ? 'Uploading...' : 'Upload Image'}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
-                  onChange={handleImageSelect}
-                  style={{ display: 'none' }}
-                  disabled={uploadingImage}
-                />
-              </label>
-              <p className="image-hint">Max size: 5MB. Supported formats: JPEG, PNG, GIF, WebP</p>
+              {profileImage && !isDefaultImage(profileImage) ? (
+                <div className="profile-image-buttons">
+                  <label className="btn btn-primary profile-upload-btn" style={{ cursor: uploadingImage ? 'not-allowed' : 'pointer', opacity: uploadingImage ? 0.6 : 1 }}>
+                    {uploadingImage ? 'Uploading...' : 'Upload'}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                      onChange={handleImageSelect}
+                      style={{ display: 'none' }}
+                      disabled={uploadingImage}
+                    />
+                  </label>
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary profile-remove-btn" 
+                    onClick={handleRemoveImage}
+                    disabled={uploadingImage}
+                    style={{ cursor: uploadingImage ? 'not-allowed' : 'pointer', opacity: uploadingImage ? 0.6 : 1 }}
+                  >
+                    {uploadingImage ? 'Removing...' : 'Remove'}
+                  </button>
+                </div>
+              ) : (
+                <label className="btn btn-primary profile-upload-btn" style={{ cursor: uploadingImage ? 'not-allowed' : 'pointer', opacity: uploadingImage ? 0.6 : 1 }}>
+                  {uploadingImage ? 'Uploading...' : 'Upload Image'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                    onChange={handleImageSelect}
+                    style={{ display: 'none' }}
+                    disabled={uploadingImage}
+                  />
+                </label>
+              )}
             </div>
           </div>
         </div>
@@ -380,52 +449,55 @@ function Profile() {
         <div className="profile-section">
           <h2>Personal Information</h2>
           <form onSubmit={handleProfileUpdate}>
-            <div className="form-group">
-              <label>Username</label>
-              <input
-                type="text"
-                value={profileData.username}
-                onChange={(e) => setProfileData({ ...profileData, username: e.target.value })}
-                className="form-control"
-                placeholder="Enter username"
-              />
-              <small className="form-text text-muted">You can update your username</small>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Username</label>
+                <input
+                  type="text"
+                  value={profileData.username}
+                  onChange={(e) => setProfileData({ ...profileData, username: e.target.value })}
+                  className="form-control"
+                  placeholder="Enter username"
+                />
+              </div>
+              
+              <div className="form-group">
+                <label>First Name *</label>
+                <input
+                  type="text"
+                  value={profileData.firstName || ''}
+                  onChange={(e) => setProfileData({ ...profileData, firstName: e.target.value })}
+                  className="form-control"
+                  required
+                />
+              </div>
             </div>
             
-            <div className="form-group">
-              <label>First Name *</label>
-              <input
-                type="text"
-                value={profileData.firstName || ''}
-                onChange={(e) => setProfileData({ ...profileData, firstName: e.target.value })}
-                className="form-control"
-                required
-              />
+            <div className="form-row">
+              <div className="form-group">
+                <label>Surname *</label>
+                <input
+                  type="text"
+                  value={profileData.surname || ''}
+                  onChange={(e) => setProfileData({ ...profileData, surname: e.target.value })}
+                  className="form-control"
+                  required
+                />
+              </div>
+              
+              <div className="form-group">
+                <label>Email *</label>
+                <input
+                  type="email"
+                  value={profileData.email}
+                  onChange={(e) => setProfileData({ ...profileData, email: e.target.value })}
+                  className="form-control"
+                  required
+                />
+              </div>
             </div>
             
-            <div className="form-group">
-              <label>Surname *</label>
-              <input
-                type="text"
-                value={profileData.surname || ''}
-                onChange={(e) => setProfileData({ ...profileData, surname: e.target.value })}
-                className="form-control"
-                required
-              />
-            </div>
-            
-            <div className="form-group">
-              <label>Email *</label>
-              <input
-                type="email"
-                value={profileData.email}
-                onChange={(e) => setProfileData({ ...profileData, email: e.target.value })}
-                className="form-control"
-                required
-              />
-            </div>
-            
-            <button type="submit" className="btn btn-primary" disabled={saving}>
+            <button type="submit" className="btn btn-primary profile-submit-btn" disabled={saving}>
               {saving ? 'Saving...' : 'Update Profile'}
             </button>
           </form>
@@ -446,7 +518,6 @@ function Profile() {
             ) : (
               <p className="text-muted">No roles assigned</p>
             )}
-            <p className="role-hint">Roles are assigned by Super Admin and cannot be changed here.</p>
           </div>
         </div>
 
@@ -454,31 +525,33 @@ function Profile() {
         <div className="profile-section">
           <h2>Change Password</h2>
           <form onSubmit={handlePasswordChange}>
-            <div className="form-group">
-              <label>Current Password *</label>
-              <input
-                type="password"
-                value={passwordData.current_password}
-                onChange={(e) => setPasswordData({ ...passwordData, current_password: e.target.value })}
-                className="form-control"
-                required
-              />
+            <div className="form-row form-row-password">
+              <div className="form-group">
+                <label>Current Password *</label>
+                <input
+                  type="password"
+                  value={passwordData.current_password}
+                  onChange={(e) => setPasswordData({ ...passwordData, current_password: e.target.value })}
+                  className="form-control"
+                  required
+                />
+              </div>
+              
+              <div className="form-group">
+                <label>New Password *</label>
+                <input
+                  type="password"
+                  value={passwordData.new_password}
+                  onChange={(e) => setPasswordData({ ...passwordData, new_password: e.target.value })}
+                  className="form-control"
+                  required
+                  minLength={6}
+                />
+                <small className="form-text text-muted">Must be at least 6 characters long</small>
+              </div>
             </div>
             
-            <div className="form-group">
-              <label>New Password *</label>
-              <input
-                type="password"
-                value={passwordData.new_password}
-                onChange={(e) => setPasswordData({ ...passwordData, new_password: e.target.value })}
-                className="form-control"
-                required
-                minLength={6}
-              />
-              <small className="form-text text-muted">Must be at least 6 characters long</small>
-            </div>
-            
-            <div className="form-group">
+            <div className="form-group form-group-full form-group-password">
               <label>Confirm New Password *</label>
               <input
                 type="password"
@@ -490,7 +563,7 @@ function Profile() {
               />
             </div>
             
-            <button type="submit" className="btn btn-primary" disabled={saving}>
+            <button type="submit" className="btn btn-primary profile-password-btn" disabled={saving}>
               {saving ? 'Changing...' : 'Change Password'}
             </button>
           </form>

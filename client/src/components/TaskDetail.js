@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getTask, startTask, pauseTask, resumeTask, completeTask, downloadTaskReport, getEarlyCompletionRequests, createEarlyCompletionRequest, getSpareRequests } from '../api/api';
+import { getTask, startTask, pauseTask, resumeTask, completeTask, downloadTaskReport, getEarlyCompletionRequests, createEarlyCompletionRequest } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 
 function TaskDetail() {
@@ -14,12 +14,12 @@ function TaskDetail() {
   const [earlyCompletionMotivation, setEarlyCompletionMotivation] = useState('');
   const [earlyCompletionRequests, setEarlyCompletionRequests] = useState([]);
   const [submittingRequest, setSubmittingRequest] = useState(false);
-  const [spareRequests, setSpareRequests] = useState([]);
+  const [showPauseModal, setShowPauseModal] = useState(false);
+  const [pauseReason, setPauseReason] = useState('');
 
   useEffect(() => {
     loadTask();
     loadEarlyCompletionRequests();
-    loadSpareRequests();
   }, [id]);
   
   const loadEarlyCompletionRequests = async () => {
@@ -31,16 +31,6 @@ function TaskDetail() {
     }
   };
 
-  const loadSpareRequests = async () => {
-    try {
-      const response = await getSpareRequests();
-      // Filter spare requests for this task
-      const taskSpareRequests = response.data.filter(sr => sr.task_id === id);
-      setSpareRequests(taskSpareRequests);
-    } catch (error) {
-      console.error('Error loading spare requests:', error);
-    }
-  };
 
   const loadTask = async () => {
     try {
@@ -69,7 +59,6 @@ function TaskDetail() {
       // Start task - overtime request will be created automatically if outside working hours
       const response = await startTask(id);
       loadTask();
-      loadSpareRequests(); // Reload spare requests in case status changed
       
       // Check if overtime request was created
       if (response.data?.overtime_request) {
@@ -84,11 +73,7 @@ function TaskDetail() {
     } catch (error) {
       console.error('Error starting task:', error);
       const errorMessage = error.response?.data?.error || 'Failed to start task';
-      const pendingSpareRequests = error.response?.data?.pending_spare_requests;
-      
-      if (pendingSpareRequests) {
-        alert(`${errorMessage}\n\nThis CM task has ${pendingSpareRequests} pending spare request(s). Please wait for admin approval before starting the task.`);
-      } else {
+      {
         const scheduledDate = error.response?.data?.scheduled_date;
         if (scheduledDate) {
           alert(`${errorMessage}\n\nScheduled date: ${new Date(scheduledDate).toLocaleDateString()}\n\nYou can request early completion if needed.`);
@@ -347,30 +332,10 @@ function TaskDetail() {
         )}
 
         <div style={{ marginTop: '30px', display: 'flex', gap: '10px', flexWrap: 'wrap', flexDirection: 'column' }}>
-          {/* Check if this is a CM task with pending spare requests */}
-          {task.status === 'pending' && 
-           (task.task_type === 'PCM' || task.task_type === 'UCM' || (task.task_type === 'CM' && task.parent_task_id)) && 
-           spareRequests.some(sr => sr.status === 'pending') && (
-            <div style={{ 
-              padding: '15px', 
-              background: '#fff3cd', 
-              borderLeft: '4px solid #ffc107',
-              borderRadius: '4px',
-              color: '#856404',
-              width: '100%',
-              marginBottom: '10px'
-            }}>
-              <strong>WARNING - Waiting for Spare Approval:</strong> This CM task cannot be started until the spare request(s) have been approved by an admin. 
-              Please wait for notification that the spares have been approved.
-            </div>
-          )}
-          
           {/* Only show Start Task button if user is assigned to the task */}
           {task.status === 'pending' && 
            task.assigned_users && 
-           task.assigned_users.some(u => u.id === user?.id) && 
-           !((task.task_type === 'PCM' || task.task_type === 'UCM' || (task.task_type === 'CM' && task.parent_task_id)) && 
-             spareRequests.some(sr => sr.status === 'pending')) && (
+           task.assigned_users.some(u => u.id === user?.id) && (
             <button className="btn btn-primary" onClick={handleStartTask}>
               Start Task
             </button>

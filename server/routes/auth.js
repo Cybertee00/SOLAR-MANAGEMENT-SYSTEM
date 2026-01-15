@@ -2,6 +2,9 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
 const { validateLogin, validateChangePassword } = require('../middleware/inputValidation');
+const { generateToken } = require('../utils/jwt');
+const { storeToken, storeUserSession, getUserSession, deleteUserSession, deleteToken } = require('../utils/redis');
+const deleteRedisToken = deleteToken; // Alias for clarity
 
 module.exports = (pool) => {
   const router = express.Router();
@@ -227,7 +230,7 @@ module.exports = (pool) => {
 
       // Explicitly save session to ensure cookie is set
       // This is important for session persistence
-      req.session.save((err) => {
+      req.session.save(async (err) => {
         if (err) {
           console.error('Error saving session:', err);
           if (!res.headersSent) {
@@ -238,11 +241,43 @@ module.exports = (pool) => {
 
         console.log('Session saved successfully');
 
-        // Return user info (without password)
+        // Single-Device-Per-Session: Check for existing active session
+        const existingToken = await getUserSession(user.id);
+        if (existingToken) {
+          console.log(`[AUTH] User ${user.id} has existing session, invalidating old session`);
+          // Delete the old token from Redis
+          await deleteRedisToken(existingToken);
+          // Destroy the old session if it exists in the database
+          // Note: We can't destroy another session, but the token is now invalid
+        }
+
+        // Generate JWT token
+        const jwtToken = generateToken({
+          id: user.id,
+          username: user.username,
+          full_name: user.full_name,
+          roles: userRoles,
+          role: userRoles[0] || user.role
+        });
+
+        // Store JWT token in Redis (if available)
+        await storeToken(jwtToken, {
+          userId: user.id,
+          username: user.username,
+          roles: userRoles,
+          role: userRoles[0] || user.role,
+          fullName: user.full_name
+        }, 86400); // 24 hours
+
+        // Store active session for user (single-device-per-session)
+        await storeUserSession(user.id, jwtToken, 86400); // 24 hours
+
+        // Return user info (without password) with JWT token
         // Make sure we only send response once
         if (!res.headersSent) {
         res.json({
           message: 'Login successful',
+          token: jwtToken, // JWT token for stateless authentication
           user: {
             id: user.id,
             username: user.username,
@@ -291,7 +326,20 @@ module.exports = (pool) => {
   });
 
   // Logout endpoint
-  router.post('/logout', (req, res) => {
+  router.post('/logout', async (req, res) => {
+    // Delete JWT token from Redis if provided
+    const { extractToken } = require('../utils/jwt');
+    const token = extractToken(req);
+    const userId = req.session?.userId;
+    
+    // Delete user session (single-device-per-session)
+    if (userId) {
+      await deleteUserSession(userId);
+    } else if (token) {
+      // Fallback: delete token directly if no userId
+      await deleteRedisToken(token);
+    }
+
     // Get the session name from the session store configuration
     const sessionName = 'sessionId'; // Matches the name set in index.js
     
@@ -343,7 +391,8 @@ module.exports = (pool) => {
         userResult = await pool.query(
           `SELECT id, username, email, full_name, role,
                   COALESCE(roles, jsonb_build_array(role)) as roles,
-                  profile_image, is_active, last_login 
+                  profile_image, is_active, last_login,
+                  COALESCE(password_changed, true) as password_changed
            FROM users 
            WHERE id = $1`,
           [req.session.userId]
@@ -351,7 +400,8 @@ module.exports = (pool) => {
       } else {
         userResult = await pool.query(
           `SELECT id, username, email, full_name, role,
-                  profile_image, is_active, last_login 
+                  profile_image, is_active, last_login,
+                  COALESCE(password_changed, true) as password_changed
            FROM users 
            WHERE id = $1`,
           [req.session.userId]
@@ -398,6 +448,9 @@ module.exports = (pool) => {
         userRoles = ['technician'];
       }
 
+      // Get password_changed status
+      const passwordChanged = user.password_changed !== false; // Default to true if null (backward compatibility)
+
       // Update session with fresh roles
       req.session.roles = userRoles;
       req.session.role = userRoles[0] || user.role || 'technician';
@@ -412,7 +465,8 @@ module.exports = (pool) => {
             profile_image: user.profile_image || null,
             role: userRoles[0] || user.role, // Primary role for backward compatibility
             roles: userRoles, // Array of all roles
-            last_login: user.last_login
+            last_login: user.last_login,
+            password_changed: passwordChanged
           }
         });
       }
@@ -482,14 +536,26 @@ module.exports = (pool) => {
       const saltRounds = 10;
       const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
 
-      // Update password
+      // Update password and set password_changed flag to true
       await pool.query(
-        'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        `UPDATE users 
+         SET password_hash = $1, 
+             password_changed = true, 
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = $2`,
         [newPasswordHash, req.session.userId]
       );
 
+      // Update session to reflect password change
+      if (req.session) {
+        req.session.passwordChanged = true;
+      }
+
       if (!res.headersSent) {
-        res.json({ message: 'Password changed successfully' });
+        res.json({ 
+          message: 'Password changed successfully',
+          password_changed: true
+        });
       }
     } catch (error) {
       console.error('Change password error:', error);

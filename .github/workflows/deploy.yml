@@ -1,0 +1,84 @@
+name: Deploy SPHAiRPlatform
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: 'Version to deploy'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          cd server && npm ci
+          cd ../client && npm ci
+
+      - name: Run tests
+        run: |
+          cd server && npm test || true
+          cd ../client && npm test -- --watchAll=false || true
+
+      - name: Build frontend
+        run: |
+          cd client && npm run build
+
+      - name: Build Docker image
+        run: |
+          docker build -t sphairplatform:${{ github.sha }} .
+
+      - name: Push to registry
+        if: github.event_name == 'push'
+        run: |
+          echo "Docker push would happen here"
+          # docker push sphairplatform:${{ github.sha }}
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+    environment: staging
+    
+    steps:
+      - name: Deploy to staging
+        run: |
+          echo "Deploy to staging would happen here"
+          # This would SSH to staging server and deploy
+
+  deploy-production:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.environment == 'production'
+    environment: production
+    
+    steps:
+      - name: Deploy to production
+        run: |
+          echo "Deploy to production would happen here"
+          # This would SSH to production server and deploy

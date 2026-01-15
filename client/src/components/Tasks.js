@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getTasks, createTask, getAssets, getChecklistTemplates, getUsers } from '../api/api';
+import { getTasks, createTask, getChecklistTemplates, getUsers } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 
 function Tasks() {
@@ -8,7 +8,6 @@ function Tasks() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [assets, setAssets] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [users, setUsers] = useState([]);
   const [filters, setFilters] = useState({
@@ -21,7 +20,7 @@ function Tasks() {
 
   const [newTask, setNewTask] = useState({
     checklist_template_id: '',
-    asset_id: '',
+    location: '',
     assigned_to: [], // Changed to array for multiple users
     task_type: 'PM',
     scheduled_date: '',
@@ -31,7 +30,6 @@ function Tasks() {
 
   useEffect(() => {
     loadTasks();
-    loadAssets();
     loadTemplates();
     if (isAdmin()) {
       loadUsers();
@@ -40,9 +38,8 @@ function Tasks() {
 
   const loadTasks = async () => {
     try {
-      const params = {};
+      const params = { task_type: 'PM' }; // Filter for PM tasks only
       if (filters.status) params.status = filters.status;
-      if (filters.task_type) params.task_type = filters.task_type;
       if (filters.completed_date) params.completed_date = filters.completed_date;
       
       const response = await getTasks(params);
@@ -54,14 +51,6 @@ function Tasks() {
     }
   };
 
-  const loadAssets = async () => {
-    try {
-      const response = await getAssets();
-      setAssets(response.data);
-    } catch (error) {
-      console.error('Error loading assets:', error);
-    }
-  };
 
   const loadTemplates = async () => {
     try {
@@ -104,13 +93,12 @@ function Tasks() {
       setShowCreateForm(false);
       setNewTask({
         checklist_template_id: '',
-        asset_id: '',
-        assigned_to: '',
+        location: '',
+        assigned_to: [],
         task_type: 'PM',
         scheduled_date: '',
         hours_worked: '',
-        budgeted_hours: '',
-        assigned_to: [] // Reset to empty array
+        budgeted_hours: ''
       });
       loadTasks();
       alert(`Task created successfully! Task Code: ${response.data.task_code}`);
@@ -128,7 +116,7 @@ function Tasks() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <h2 style={{ marginBottom: 0 }}>Tasks</h2>
+        <h2 style={{ marginBottom: 0 }}>PM Tasks</h2>
         {isAdmin() && (
           <button className="btn btn-sm btn-primary" onClick={() => setShowCreateForm(!showCreateForm)} style={{ padding: '8px 16px', fontSize: '13px' }}>
             {showCreateForm ? 'Cancel' : 'Create New Task'}
@@ -156,19 +144,15 @@ function Tasks() {
               </select>
             </div>
             <div className="form-group">
-              <label>Asset</label>
-              <select
-                value={newTask.asset_id}
-                onChange={(e) => setNewTask({ ...newTask, asset_id: e.target.value })}
+              <label>Location</label>
+              <input
+                type="text"
+                value={newTask.location}
+                onChange={(e) => setNewTask({ ...newTask, location: e.target.value })}
+                placeholder="Enter location (e.g., DC Combiner Board, Inverter 1, etc.)"
                 required
-              >
-                <option value="">Select asset...</option>
-                {assets.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.asset_name} ({a.asset_code})
-                  </option>
-                ))}
-              </select>
+                style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+              />
             </div>
             {isAdmin() && (
               <div className="form-group">
@@ -191,21 +175,24 @@ function Tasks() {
                     WebkitAppearance: 'menulist', // Better mobile support
                     appearance: 'menulist'
                   }}
-                  size={Math.min(users.filter(u => u.is_active).length, 4)} // Show max 4 options at once for mobile
+                  size={Math.min(users.filter(u => {
+                    if (!u.is_active) return false;
+                    // Check if user has admin or technician role
+                    const userRoles = Array.isArray(u.roles) ? u.roles : (u.role ? [u.role] : []);
+                    return userRoles.some(r => r === 'admin' || r === 'technician');
+                  }).length, 4)} // Show max 4 options at once for mobile
                 >
-                  {users.filter(u => u.is_active).map((u) => (
+                  {users.filter(u => {
+                    if (!u.is_active) return false;
+                    // Check if user has admin or technician role
+                    const userRoles = Array.isArray(u.roles) ? u.roles : (u.role ? [u.role] : []);
+                    return userRoles.some(r => r === 'admin' || r === 'technician');
+                  }).map((u) => (
                     <option key={u.id} value={u.id}>
-                      {u.full_name} ({u.username}) - {u.role}
+                      {u.full_name}
                     </option>
                   ))}
                 </select>
-                <small style={{ display: 'block', marginTop: '5px', color: '#666', fontSize: '12px' }}>
-                  {/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? (
-                    'Tap to select/deselect users. Selected users appear below.'
-                  ) : (
-                    'Hold Ctrl (Windows) or Cmd (Mac) to select multiple users.'
-                  )}
-                </small>
                 {newTask.assigned_to.length > 0 && (
                   <div style={{ marginTop: '10px' }}>
                     <div style={{ 
@@ -296,9 +283,6 @@ function Tasks() {
             <div className="form-group">
               <label>
                 Scheduled Date
-                <span style={{ fontSize: '12px', color: '#666', marginLeft: '10px' }}>
-                  (Optional - defaults to today if not set)
-                </span>
               </label>
               <input
                 type="date"
@@ -306,12 +290,6 @@ function Tasks() {
                 onChange={(e) => setNewTask({ ...newTask, scheduled_date: e.target.value })}
                 min={new Date().toISOString().split('T')[0]} // Prevent selecting past dates
               />
-              <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-                {newTask.scheduled_date 
-                  ? `Task will be scheduled for ${new Date(newTask.scheduled_date).toLocaleDateString()}`
-                  : `If not set, task will be scheduled for today (${new Date().toLocaleDateString()})`
-                }
-              </p>
             </div>
             <div className="form-group">
               <label>Hours Worked (Optional)</label>
@@ -432,7 +410,7 @@ function Tasks() {
                         <th style={{ padding: '10px', textAlign: 'left' }}>Task Code</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Template</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Type</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Asset</th>
+                        <th style={{ padding: '10px', textAlign: 'left' }}>Location</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Assigned To</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Status</th>
                         <th style={{ padding: '10px', textAlign: 'left' }}>Hours</th>
@@ -468,7 +446,7 @@ function Tasks() {
                                 fontSize: '10px',
                                 fontWeight: 'bold'
                               }}>
-                                ⚠ FLAGGED
+                                FLAGGED
                               </span>
                             )}
                           </td>
@@ -476,7 +454,7 @@ function Tasks() {
                           <td data-label="Type" style={{ padding: '10px' }}>
                             <span className={`task-badge ${task.task_type}`} style={{ fontSize: '11px', padding: '4px 8px' }}>{task.task_type}</span>
                           </td>
-                          <td data-label="Asset" style={{ padding: '10px' }}>{task.asset_name || 'N/A'}</td>
+                          <td data-label="Location" style={{ padding: '10px' }}>{task.location || task.asset_name || 'N/A'}</td>
                           <td data-label="Assigned To" style={{ padding: '10px' }}>
                             {task.assigned_users && task.assigned_users.length > 0 ? (
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>

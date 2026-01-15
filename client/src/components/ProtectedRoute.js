@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 function ProtectedRoute({ children, requireAdmin = false }) {
-  const { isAuthenticated, isAdmin, loading } = useAuth();
+  const { isAuthenticated, isAdmin, user, loading } = useAuth();
 
   if (loading) {
     return <div className="loading">Loading...</div>;
@@ -11,6 +11,19 @@ function ProtectedRoute({ children, requireAdmin = false }) {
 
   if (!isAuthenticated()) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Block access if password hasn't been changed
+  if (user && user.password_changed === false) {
+    return (
+      <div className="container">
+        <div className="alert alert-warning" style={{ margin: '20px', padding: '20px' }}>
+          <h3>Password Change Required</h3>
+          <p>You must change your default password before accessing the application.</p>
+          <p>Please wait for the password change dialog to appear.</p>
+        </div>
+      </div>
+    );
   }
 
   if (requireAdmin && !isAdmin()) {

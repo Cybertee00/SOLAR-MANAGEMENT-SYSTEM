@@ -39,12 +39,12 @@ function ConnectionTest() {
         <div style={{ marginTop: '20px', padding: '15px', background: result.success ? '#d4edda' : '#f8d7da', borderRadius: '4px' }}>
           {result.success ? (
             <div>
-              <strong>✅ Connection Successful!</strong>
+              <strong>Connection Successful!</strong>
               <pre>{JSON.stringify(result.data, null, 2)}</pre>
             </div>
           ) : (
             <div>
-              <strong>❌ Connection Failed</strong>
+              <strong>Connection Failed</strong>
               <p>Error: {result.error}</p>
               {result.code && <p>Code: {result.code}</p>}
               {result.status && <p>Status: {result.status}</p>}

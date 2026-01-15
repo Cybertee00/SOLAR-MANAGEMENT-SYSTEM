@@ -3,38 +3,52 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'solar_om_db',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-});
+// Parse command line arguments
+const args = process.argv.slice(2);
+const migrationFile = args[0] || 'add_task_pause_resume.sql';
+
+// Allow credentials to be passed as environment variables or command line args
+// Format: node run-migration.js migration.sql --user=postgres --password=mypass --host=localhost --port=5432 --database=solar_om_db
+const config = {
+  host: process.env.DB_HOST || args.find(arg => arg.startsWith('--host='))?.split('=')[1] || 'localhost',
+  port: parseInt(process.env.DB_PORT || args.find(arg => arg.startsWith('--port='))?.split('=')[1] || '5432'),
+  database: process.env.DB_NAME || args.find(arg => arg.startsWith('--database='))?.split('=')[1] || 'solar_om_db',
+  user: process.env.DB_USER || args.find(arg => arg.startsWith('--user='))?.split('=')[1] || 'postgres',
+  password: process.env.DB_PASSWORD || args.find(arg => arg.startsWith('--password='))?.split('=')[1] || 'postgres',
+};
+
+console.log('Database configuration:');
+console.log(`  Host: ${config.host}`);
+console.log(`  Port: ${config.port}`);
+console.log(`  Database: ${config.database}`);
+console.log(`  User: ${config.user}`);
+console.log(`  Password: ${config.password ? '***' : '(not set)'}`);
+console.log('');
+
+const pool = new Pool(config);
 
 async function runMigration() {
   try {
-    // Get migration file name from command line argument
-    const migrationFileName = process.argv[2] || 'add_role_system_and_spare_requests.sql';
+    const migrationPath = path.join(__dirname, '../db/migrations', migrationFile);
     
-    console.log(`Running migration: ${migrationFileName}`);
-    
-    const migrationPath = path.join(__dirname, '../db/migrations', migrationFileName);
     if (!fs.existsSync(migrationPath)) {
-      console.error('Migration file not found:', migrationPath);
+      console.error(`Migration file not found: ${migrationPath}`);
       process.exit(1);
     }
-
-    const migration = fs.readFileSync(migrationPath, 'utf8');
-    await pool.query(migration);
-    console.log(`Migration ${migrationFileName} applied successfully!`);
     
+    const migration = fs.readFileSync(migrationPath, 'utf8');
+    console.log(`Running migration: ${migrationFile}`);
+    await pool.query(migration);
+    console.log('Migration applied successfully');
     await pool.end();
   } catch (error) {
-    console.error('Error running migration:', error);
+    console.error('Error applying migration:', error.message);
+    console.error('\nIf you need to specify database credentials, use:');
+    console.error('  node run-migration.js migration.sql --user=youruser --password=yourpass --host=localhost --port=5432 --database=yourdb');
+    console.error('\nOr set environment variables: DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME');
     await pool.end();
     process.exit(1);
   }
 }
 
 runMigration();
-

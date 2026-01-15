@@ -58,8 +58,8 @@ The frontend needs to know the public backend URL. You have two options:
   ```
 
 **Option B: Use Setup Page (Recommended)**
-- Navigate to: `https://xxxx-3000.xxxx.devtunnels.ms/setup-backend.html`
-- Enter the backend URL: `https://yyyy-3001.xxxx.devtunnels.ms/api`
+- Navigate to: `https://tmt3wkcr-3000.uks1.devtunnels.ms/setup-backend.html`
+- Enter the backend URL: `https://tmt3wkcr-3001.uks1.devtunnels.ms/`
 - Click "Save Configuration"
 
 ### Step 4: Share the Frontend URL

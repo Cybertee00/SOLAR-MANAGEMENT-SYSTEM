@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getTask, submitChecklistResponse, saveDraftResponse, getDraftResponse, deleteDraftResponse, getInventoryItems, createSpareRequest } from '../api/api';
+import { getTask, submitChecklistResponse, saveDraftResponse, getDraftResponse, deleteDraftResponse, getInventoryItems } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 
 function ChecklistForm() {
@@ -21,12 +21,10 @@ function ChecklistForm() {
   // Value: { file?, comment?, preview?, uploaded? { id, image_path, image_filename }, uploadedAt? }
   const [itemImages, setItemImages] = useState({});
   const [sparesUsed, setSparesUsed] = useState([]); // [{ item_code, qty_used }]
-  const [sparesRequested, setSparesRequested] = useState([]); // [{ item_id, item_code, item_description, quantity, reason }] - requested spares
-  const [showSpareRequestModal, setShowSpareRequestModal] = useState(false);
-  const [spareRequestItems, setSpareRequestItems] = useState([{ item_id: '', quantity: 1, reason: '' }]);
   const [inventoryOptions, setInventoryOptions] = useState([]);
   const [sparesSearchQuery, setSparesSearchQuery] = useState('');
   const [filteredInventoryOptions, setFilteredInventoryOptions] = useState([]);
+  const [showSpareSelection, setShowSpareSelection] = useState(false);
   const [hoursWorked, setHoursWorked] = useState('');
   const { isTechnician, user } = useAuth();
   const [autoSaveStatus, setAutoSaveStatus] = useState(''); // 'saving', 'saved', 'error'
@@ -93,7 +91,7 @@ function ChecklistForm() {
     if (!task || !task.checklist_template_id) return;
 
     // Skip if nothing has changed
-    const currentState = JSON.stringify({ formData, metadata, images: itemImages, sparesUsed, sparesRequested, hoursWorked });
+    const currentState = JSON.stringify({ formData, metadata, images: itemImages, sparesUsed, hoursWorked });
     if (currentState === lastSavedRef.current) return;
 
     try {
@@ -107,7 +105,6 @@ function ChecklistForm() {
         approved_by: metadata.approved_by,
         images: itemImages,
         spares_used: sparesUsed,
-        spares_requested: sparesRequested,
         hours_worked: hoursWorked
       });
       lastSavedRef.current = currentState;
@@ -207,7 +204,6 @@ function ChecklistForm() {
             setSparesUsed(draft.spares_used);
           }
           if (Array.isArray(draft?.spares_requested)) {
-            setSparesRequested(draft.spares_requested);
           }
           if (draft?.hours_worked !== undefined) {
             setHoursWorked(draft.hours_worked.toString());
@@ -347,25 +343,6 @@ function ChecklistForm() {
         }
       }
 
-      // Create spare request for all task types if spares were requested
-      if (sparesRequested.length > 0) {
-        try {
-          const requestedItems = sparesRequested.map(req => ({
-            item_id: req.item_id,
-            quantity: req.quantity,
-            reason: req.reason || null
-          }));
-
-          await createSpareRequest({
-            task_id: id,
-            requested_items: requestedItems,
-            notes: `Spare request from ${task.task_type} task completion`
-          });
-        } catch (error) {
-          console.error('Error creating spare request:', error);
-          // Don't block submission if request creation fails
-        }
-      }
 
       // For UCM tasks, include time fields
       const submitData = {
@@ -470,7 +447,7 @@ function ChecklistForm() {
             onClick={() => navigate(`/tasks/${id}`)}
             style={{ marginTop: '10px' }}
           >
-            ← Back to Task Details
+            Back to Task Details
           </button>
         </div>
       </div>
@@ -550,7 +527,7 @@ function ChecklistForm() {
                   onChange={(e) => handleInputChange(sectionId, item.id, e.target.value, 'status')}
                   style={{ marginRight: '8px' }}
                 />
-                <span style={{ color: '#28a745', fontWeight: 'bold' }}>✓ Pass</span>
+                <span style={{ color: '#28a745', fontWeight: 'bold' }}>Pass</span>
               </label>
               <label style={{ flex: '1', minWidth: '120px', padding: '12px', border: '1px solid #ddd', borderRadius: '4px', background: itemValue.status === 'fail' ? '#f8d7da' : 'white', cursor: 'pointer' }}>
                 <input
@@ -561,7 +538,7 @@ function ChecklistForm() {
                   onChange={(e) => handleInputChange(sectionId, item.id, e.target.value, 'status')}
                   style={{ marginRight: '8px' }}
                 />
-                <span style={{ color: '#dc3545', fontWeight: 'bold' }}>✗ Fail</span>
+                <span style={{ color: '#dc3545', fontWeight: 'bold' }}>Fail</span>
               </label>
             </div>
 
@@ -600,7 +577,7 @@ function ChecklistForm() {
             {itemValue.status === 'fail' && (
               <div style={{ marginTop: '15px', padding: '15px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '4px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 'bold' }}>
-                  📷 Upload Image for Failed Item (Required for CM)
+                  Upload Image for Failed Item (Required for CM)
                 </label>
                 <input
                   type="file"
@@ -722,7 +699,7 @@ function ChecklistForm() {
     <div>
       <div style={{ marginBottom: '20px' }}>
         <button className="btn btn-secondary" onClick={() => navigate(`/tasks/${id}`)}>
-          ← Back to Task
+            Back to Task
         </button>
       </div>
 
@@ -743,9 +720,9 @@ function ChecklistForm() {
             border: `1px solid ${autoSaveStatus === 'saving' ? '#ffc107' : 
                                 autoSaveStatus === 'saved' ? '#28a745' : '#dc3545'}`
           }}>
-            {autoSaveStatus === 'saving' && '💾 Saving draft...'}
-            {autoSaveStatus === 'saved' && '✓ Draft saved'}
-            {autoSaveStatus === 'error' && '⚠ Error saving draft'}
+            {autoSaveStatus === 'saving' && 'Saving draft...'}
+            {autoSaveStatus === 'saved' && 'Draft saved'}
+            {autoSaveStatus === 'error' && 'Error saving draft'}
           </div>
         )}
 
@@ -809,9 +786,6 @@ function ChecklistForm() {
         {task.task_type === 'UCM' && (
           <div className="section" style={{ marginTop: '20px', marginBottom: '20px', background: '#fff3cd', borderLeft: '4px solid #ffc107' }}>
             <div className="section-title" style={{ color: '#856404' }}>UCM Time Information</div>
-            <p style={{ marginTop: 0, color: '#856404', fontSize: '14px' }}>
-              Please provide the times for when the CM issue occurred, when you started the task, and when you finished.
-            </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '15px', marginTop: '15px' }}>
               <div className="form-group">
                 <label>CM Issue Occurred At *</label>
@@ -822,9 +796,6 @@ function ChecklistForm() {
                   required
                   style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #ddd', borderRadius: '6px' }}
                 />
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                  When did the issue occur?
-                </small>
               </div>
               <div className="form-group">
                 <label>Task Started At *</label>
@@ -835,9 +806,6 @@ function ChecklistForm() {
                   required
                   style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #ddd', borderRadius: '6px' }}
                 />
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                  When did you start working on this task?
-                </small>
               </div>
               <div className="form-group">
                 <label>Task Completed At *</label>
@@ -848,9 +816,6 @@ function ChecklistForm() {
                   required
                   style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #ddd', borderRadius: '6px' }}
                 />
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                  When did you finish this task?
-                </small>
               </div>
             </div>
           </div>
@@ -864,321 +829,146 @@ function ChecklistForm() {
             </div>
           ))}
 
-          {/* Spares Request & Selection */}
+          {/* Spares Selection */}
           <div className="section" style={{ marginTop: '30px', background: '#f9f9f9', borderLeft: '4px solid #6c757d' }}>
             <div className="section-title">Spares Used (Inventory)</div>
-            <p style={{ marginTop: 0, color: '#666', fontSize: '14px' }}>
-              Request spares for this task. After requesting, select which spares you actually used. On submit, stock is deducted and a usage slip is recorded for audit.
+            <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+              Search and select spares used during this task. Selected spares will be automatically deducted from inventory when you submit the checklist.
             </p>
 
             {inventoryOptions.length === 0 ? (
-              <p style={{ color: '#666' }}>Inventory list not loaded (optional).</p>
+              <p style={{ color: '#666' }}>Loading inventory list...</p>
             ) : (
               <>
-                {/* Request Spares Button */}
+                {/* Search Bar */}
                 <div style={{ marginBottom: '20px' }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => setShowSpareRequestModal(true)}
-                    style={{
-                      padding: '12px 24px',
-                      fontSize: '16px',
-                      fontWeight: 'bold'
+                  <input
+                    type="text"
+                    placeholder="Search spares by item code or description..."
+                    value={sparesSearchQuery}
+                    onChange={(e) => {
+                      setSparesSearchQuery(e.target.value);
+                      const query = e.target.value.toLowerCase().trim();
+                      if (!query) {
+                        setFilteredInventoryOptions(inventoryOptions);
+                      } else {
+                        const filtered = inventoryOptions.filter(item => 
+                          (item.item_code && item.item_code.toLowerCase().includes(query)) ||
+                          (item.item_description && item.item_description.toLowerCase().includes(query)) ||
+                          (item.section && item.section.toLowerCase().includes(query))
+                        );
+                        setFilteredInventoryOptions(filtered);
+                      }
                     }}
-                  >
-                    + Request Spares
-                  </button>
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      fontSize: '16px',
+                      border: '2px solid #ddd',
+                      borderRadius: '6px'
+                    }}
+                  />
                 </div>
 
-                {/* Show Requested Spares with Selection */}
-                {sparesRequested.length > 0 && (
-                  <div style={{ marginTop: '20px', padding: '15px', background: '#fff', borderRadius: '8px', border: '1px solid #ddd' }}>
-                    <h4 style={{ marginTop: 0, marginBottom: '15px', fontSize: '16px', fontWeight: 'bold' }}>
-                      Requested Spares - Select which ones you used:
-                    </h4>
-                    {sparesRequested.map((requested, idx) => {
-                      const isSelected = sparesUsed.some(used => used.item_code === requested.item_code);
-                      const usedItem = sparesUsed.find(used => used.item_code === requested.item_code);
-                      
-                      return (
-                        <div 
-                          key={idx} 
-                          style={{ 
-                            marginBottom: '15px', 
-                            padding: '15px', 
-                            background: isSelected ? '#e8f5e9' : '#f5f5f5',
-                            borderRadius: '8px',
-                            border: `2px solid ${isSelected ? '#4caf50' : '#ddd'}`
+                {/* Spare Selection List */}
+                <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #ddd', borderRadius: '8px', background: '#fff' }}>
+                  {(sparesSearchQuery ? filteredInventoryOptions : inventoryOptions).map((item) => {
+                    const isSelected = sparesUsed.some(used => used.item_code === item.item_code);
+                    const usedItem = sparesUsed.find(used => used.item_code === item.item_code);
+                    const availableQty = item.actual_qty || 0;
+                    
+                    return (
+                      <div
+                        key={item.id}
+                        style={{
+                          padding: '15px',
+                          borderBottom: '1px solid #eee',
+                          background: isSelected ? '#e8f5e9' : '#fff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '15px',
+                          flexWrap: 'wrap'
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSparesUsed([...sparesUsed, {
+                                item_code: item.item_code,
+                                qty_used: 1
+                              }]);
+                            } else {
+                              setSparesUsed(sparesUsed.filter(used => used.item_code !== item.item_code));
+                            }
                           }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '15px', flexWrap: 'wrap' }}>
-                            <div style={{ flex: '1', minWidth: '200px' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      // Add to sparesUsed
-                                      const invItem = inventoryOptions.find(i => i.item_code === requested.item_code);
-                                      setSparesUsed([...sparesUsed, {
-                                        item_code: requested.item_code,
-                                        qty_used: requested.quantity || 1
-                                      }]);
-                                    } else {
-                                      // Remove from sparesUsed
-                                      setSparesUsed(sparesUsed.filter(used => used.item_code !== requested.item_code));
-                                    }
-                                  }}
-                                  style={{ width: '20px', height: '20px', cursor: 'pointer' }}
-                                />
-                                <div style={{ flex: 1 }}>
-                                  <div style={{ fontWeight: 'bold', fontSize: '15px' }}>
-                                    {requested.item_description || requested.item_code}
-                                  </div>
-                                  <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>
-                                    Requested: {requested.quantity} {requested.reason && `- ${requested.reason}`}
-                                  </div>
-                                </div>
-                              </label>
-                            </div>
-                            
-                            {isSelected && (
-                              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flex: '0 0 auto' }}>
-                                <label style={{ fontSize: '14px', fontWeight: 'bold' }}>Quantity Used:</label>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max={requested.quantity}
-                                  value={usedItem?.qty_used || requested.quantity}
-                                  onChange={(e) => {
-                                    const qty = parseInt(e.target.value) || 1;
-                                    const maxQty = requested.quantity;
-                                    const finalQty = Math.min(Math.max(1, qty), maxQty);
-                                    
-                                    const updated = sparesUsed.map(used => 
-                                      used.item_code === requested.item_code 
-                                        ? { ...used, qty_used: finalQty }
-                                        : used
-                                    );
-                                    setSparesUsed(updated);
-                                  }}
-                                  style={{
-                                    width: '80px',
-                                    padding: '8px 10px',
-                                    fontSize: '14px',
-                                    border: '2px solid #4caf50',
-                                    borderRadius: '6px',
-                                    outline: 'none'
-                                  }}
-                                />
-                                <span style={{ fontSize: '13px', color: '#666' }}>
-                                  (max: {requested.quantity})
-                                </span>
-                              </div>
-                            )}
+                          style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                        />
+                        <div style={{ flex: 1, minWidth: '200px' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '15px' }}>
+                            {item.item_description || item.item_code}
                           </div>
+                          <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>
+                            Code: {item.item_code} | Available: {availableQty}
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                            <label style={{ fontSize: '14px', fontWeight: 'bold' }}>Qty:</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max={availableQty}
+                              value={usedItem?.qty_used || 1}
+                              onChange={(e) => {
+                                const qty = parseInt(e.target.value) || 1;
+                                const finalQty = Math.min(Math.max(1, qty), availableQty);
+                                const updated = sparesUsed.map(used => 
+                                  used.item_code === item.item_code 
+                                    ? { ...used, qty_used: finalQty }
+                                    : used
+                                );
+                                setSparesUsed(updated);
+                              }}
+                              style={{
+                                width: '80px',
+                                padding: '8px 10px',
+                                fontSize: '14px',
+                                border: '2px solid #4caf50',
+                                borderRadius: '6px',
+                                outline: 'none'
+                              }}
+                            />
+                            <span style={{ fontSize: '13px', color: '#666' }}>
+                              (max: {availableQty})
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Selected Spares Summary */}
+                {sparesUsed.length > 0 && (
+                  <div style={{ marginTop: '20px', padding: '15px', background: '#e8f5e9', borderRadius: '8px', border: '2px solid #4caf50' }}>
+                    <h4 style={{ marginTop: 0, marginBottom: '15px', fontSize: '16px', fontWeight: 'bold' }}>
+                      Selected Spares ({sparesUsed.length}):
+                    </h4>
+                    {sparesUsed.map((used, idx) => {
+                      const item = inventoryOptions.find(i => i.item_code === used.item_code);
+                      return (
+                        <div key={idx} style={{ marginBottom: '8px', fontSize: '14px' }}>
+                          • {item?.item_description || used.item_code}: {used.qty_used} unit(s)
                         </div>
                       );
                     })}
-                    
-                    <div style={{ marginTop: '15px', padding: '10px', background: '#fff3cd', borderRadius: '6px', fontSize: '14px', color: '#856404' }}>
-                      <strong>Note:</strong> Only checked spares will be deducted from inventory when you submit the checklist.
-                    </div>
-                  </div>
-                )}
-
-                {sparesRequested.length === 0 && (
-                  <div style={{ padding: '20px', textAlign: 'center', color: '#666', background: '#fff', borderRadius: '8px', border: '1px dashed #ddd' }}>
-                    <p style={{ margin: 0 }}>No spares requested yet. Click "Request Spares" to add spares for this task.</p>
                   </div>
                 )}
               </>
             )}
           </div>
-
-          {/* Spare Request Modal */}
-          {showSpareRequestModal && (
-            <div 
-              className="modal-overlay" 
-              onClick={() => setShowSpareRequestModal(false)}
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: 'rgba(0,0,0,0.5)',
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                zIndex: 1000
-              }}
-            >
-              <div 
-                className="modal-content" 
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  background: 'white',
-                  padding: '30px',
-                  borderRadius: '8px',
-                  maxWidth: '600px',
-                  width: '90%',
-                  maxHeight: '80vh',
-                  overflowY: 'auto'
-                }}
-              >
-                <h3 style={{ marginTop: 0 }}>Request Spares</h3>
-                <p style={{ color: '#666', fontSize: '14px' }}>
-                  Select the spares you need for this task. You can choose which ones to use after submitting the request.
-                </p>
-
-                {spareRequestItems.map((item, idx) => (
-                  <div key={idx} style={{ marginBottom: '15px', padding: '15px', background: '#f5f5f5', borderRadius: '8px' }}>
-                    <div style={{ marginBottom: '10px' }}>
-                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Spare Item:</label>
-                      <select
-                        value={item.item_id}
-                        onChange={(e) => {
-                          const selectedItem = inventoryOptions.find(i => i.id === e.target.value);
-                          const next = [...spareRequestItems];
-                          next[idx] = { 
-                            ...next[idx], 
-                            item_id: e.target.value,
-                            item_code: selectedItem?.item_code || '',
-                            item_description: selectedItem?.item_description || ''
-                          };
-                          setSpareRequestItems(next);
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '10px',
-                          border: '1px solid #ddd',
-                          borderRadius: '4px'
-                        }}
-                      >
-                        <option value="">Select spare...</option>
-                        {inventoryOptions.map((it) => {
-                          const fullSection = String(it.section || '').trim();
-                          const section = fullSection.includes(' | ') 
-                            ? fullSection.split(' | ')[0].trim() 
-                            : fullSection;
-                          return (
-                            <option key={it.id} value={it.id}>
-                              {section ? `${section} - ` : ''}{it.item_description || it.item_code} (Available: {it.actual_qty})
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-                    <div style={{ marginBottom: '10px' }}>
-                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Quantity:</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={item.quantity}
-                        onChange={(e) => {
-                          const next = [...spareRequestItems];
-                          next[idx] = { ...next[idx], quantity: parseInt(e.target.value) || 1 };
-                          setSpareRequestItems(next);
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '10px',
-                          border: '1px solid #ddd',
-                          borderRadius: '4px'
-                        }}
-                      />
-                    </div>
-                    <div style={{ marginBottom: '10px' }}>
-                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Reason (Optional):</label>
-                      <textarea
-                        value={item.reason}
-                        onChange={(e) => {
-                          const next = [...spareRequestItems];
-                          next[idx] = { ...next[idx], reason: e.target.value };
-                          setSpareRequestItems(next);
-                        }}
-                        placeholder="Why is this spare needed?"
-                        rows="2"
-                        style={{
-                          width: '100%',
-                          padding: '10px',
-                          border: '1px solid #ddd',
-                          borderRadius: '4px',
-                          resize: 'vertical'
-                        }}
-                      />
-                    </div>
-                    {spareRequestItems.length > 1 && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-danger"
-                        onClick={() => setSpareRequestItems(spareRequestItems.filter((_, i) => i !== idx))}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                ))}
-
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setSpareRequestItems([...spareRequestItems, { item_id: '', quantity: 1, reason: '' }])}
-                  style={{ marginBottom: '20px' }}
-                >
-                  + Add Another Spare
-                </button>
-
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => {
-                      setShowSpareRequestModal(false);
-                      setSpareRequestItems([{ item_id: '', quantity: 1, reason: '' }]);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={async () => {
-                      // Validate
-                      const validItems = spareRequestItems.filter(item => item.item_id && item.quantity > 0);
-                      if (validItems.length === 0) {
-                        alert('Please select at least one spare item with quantity');
-                        return;
-                      }
-
-                      // Store requested spares locally (for now, we'll create the request on submit)
-                      const requested = validItems.map(item => {
-                        const invItem = inventoryOptions.find(i => i.id === item.item_id);
-                        return {
-                          item_id: item.item_id,
-                          item_code: invItem?.item_code || '',
-                          item_description: invItem?.item_description || '',
-                          quantity: item.quantity,
-                          reason: item.reason || ''
-                        };
-                      });
-
-                      setSparesRequested(requested);
-                      setShowSpareRequestModal(false);
-                      setSpareRequestItems([{ item_id: '', quantity: 1, reason: '' }]);
-                      
-                      alert(`Requested ${requested.length} spare(s). You can now select which ones to use.`);
-                    }}
-                  >
-                    Submit Request
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Hours Worked Section */}
           <div className="section" style={{ marginTop: '30px', background: '#f9f9f9', borderLeft: '4px solid #6c757d' }}>
@@ -1196,15 +986,12 @@ function ChecklistForm() {
                 placeholder="0.0"
                 style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #ddd', borderRadius: '6px' }}
               />
-              <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                Enter the total number of hours worked on this task. If budgeted hours are set and exceeded, the task will be flagged.
-              </small>
               {task.budgeted_hours && (
                 <div style={{ marginTop: '8px', padding: '8px', background: '#e3f2fd', borderRadius: '4px', fontSize: '13px' }}>
                   <strong>Budgeted Hours:</strong> {parseFloat(task.budgeted_hours).toFixed(1)}h
                   {hoursWorked && parseFloat(hoursWorked) > parseFloat(task.budgeted_hours) && (
                     <span style={{ color: '#dc3545', marginLeft: '10px', fontWeight: 'bold' }}>
-                      ⚠ Budget exceeded!
+                      WARNING: Budget exceeded!
                     </span>
                   )}
                 </div>

@@ -175,6 +175,63 @@ async function updateActualQtyInExcel(updatesByItemCode, filePath = DEFAULT_INVE
 }
 
 /**
+ * Update inventory item fields in Excel based on item_code.
+ * Updates: section, item_code, item_description, part_type, min_level, actual_qty
+ * If item_code changes, updates the row with the old code.
+ */
+async function updateInventoryItemInExcel(oldItemCode, updates, filePath = DEFAULT_INVENTORY_XLSX) {
+  const { workbook, worksheet, fullPath } = await loadInventoryWorkbook(filePath);
+  const { headerRow, colMap } = findHeaderRowAndColumns(worksheet);
+  
+  const colSection = colMap['section'] || 1;
+  const colCode = colMap['item code'] || 2;
+  const colDesc = colMap['item description'] || 3;
+  const colPartType = colMap['part type'] || 4;
+  const colMin = colMap['minlevel'] || 5;
+  const colActual = colMap['actual qty'] || 6;
+
+  // Build row lookup by old item code
+  let rowNum = null;
+  for (let r = headerRow + 1; r <= worksheet.rowCount; r++) {
+    const row = worksheet.getRow(r);
+    const code = cellText(row.getCell(colCode).value).trim();
+    if (code === oldItemCode) {
+      rowNum = r;
+      break;
+    }
+  }
+
+  if (!rowNum) {
+    throw new Error(`Item code "${oldItemCode}" not found in Excel file`);
+  }
+
+  const row = worksheet.getRow(rowNum);
+
+  // Update fields if provided
+  if (updates.section !== undefined) {
+    row.getCell(colSection).value = updates.section || '';
+  }
+  if (updates.item_code !== undefined) {
+    row.getCell(colCode).value = updates.item_code || '';
+  }
+  if (updates.item_description !== undefined) {
+    row.getCell(colDesc).value = updates.item_description || '';
+  }
+  if (updates.part_type !== undefined) {
+    row.getCell(colPartType).value = updates.part_type || '';
+  }
+  if (updates.min_level !== undefined) {
+    row.getCell(colMin).value = Number(updates.min_level) || 0;
+  }
+  if (updates.actual_qty !== undefined) {
+    row.getCell(colActual).value = Number(updates.actual_qty) || 0;
+  }
+
+  await workbook.xlsx.writeFile(fullPath);
+  return { updated: true, filePath: fullPath, rowNumber: rowNum };
+}
+
+/**
  * Export inventory to Excel using the existing template structure.
  * Reads the template, updates it with current database values, and returns the workbook buffer.
  * Preserves the template's formatting and structure while updating data.
@@ -274,6 +331,7 @@ module.exports = {
   DEFAULT_INVENTORY_XLSX,
   parseInventoryFromExcel,
   updateActualQtyInExcel,
+  updateInventoryItemInExcel,
   exportInventoryToExcel
 };
 

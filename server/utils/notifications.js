@@ -310,74 +310,13 @@ async function scheduleReminders(pool) {
   }
 }
 
-/**
- * Notify users when spare requests are approved for a CM task
- * @param {Object} pool - Database connection pool
- * @param {Object} spareRequest - Spare request object
- * @param {Object} task - Task object
- * @param {Array} approvedItems - Array of approved items with details
- */
-async function notifySpareRequestApproved(pool, spareRequest, task, approvedItems) {
-  try {
-    // Get all assigned users for the task
-    const assignedUsersResult = await pool.query(
-      `SELECT u.id, u.email, u.full_name, u.username
-       FROM task_assignments ta
-       JOIN users u ON ta.user_id = u.id
-       WHERE ta.task_id = $1`,
-      [task.id]
-    );
-
-    if (assignedUsersResult.rows.length === 0) {
-      console.log(`No assigned users found for task ${task.task_code}`);
-      return;
-    }
-
-    const assignedUsers = assignedUsersResult.rows;
-    
-    // Format approved items list
-    const itemsList = approvedItems.map(item => {
-      const qty = item.approved_quantity || item.quantity;
-      return `${item.item_code || item.item_description} (Qty: ${qty})`;
-    }).join(', ');
-
-    const itemsText = approvedItems.length === 1 
-      ? `spare ${itemsList} has been approved`
-      : `spares ${itemsList} have been approved`;
-
-    // Send notification to each assigned user
-    for (const user of assignedUsers) {
-      await createNotification(pool, {
-        user_id: user.id,
-        task_id: task.id,
-        type: 'spare_request_approved',
-        title: 'CM Task Ready - Spares Approved',
-        message: `The CM task ${task.task_code} is now ready to start. The following ${itemsText}.`,
-        metadata: {
-          task_code: task.task_code,
-          task_type: task.task_type,
-          spare_request_id: spareRequest.id,
-          approved_items: approvedItems,
-          highlight: true
-        }
-      });
-    }
-
-    console.log(`Spare request approval notifications sent to ${assignedUsers.length} user(s) for task ${task.task_code}`);
-  } catch (error) {
-    console.error('Error sending spare request approval notifications:', error);
-    // Don't throw - notification failure shouldn't break the approval process
-  }
-}
 
 module.exports = {
   createNotification,
   notifyTaskAssigned,
   notifyTaskReminder,
   notifyTaskFlagged,
-  notifyTaskPaused,
   notifyOvertimeRequest,
   notifyEarlyCompletionStatus,
-  notifySpareRequestApproved,
   scheduleReminders
 };

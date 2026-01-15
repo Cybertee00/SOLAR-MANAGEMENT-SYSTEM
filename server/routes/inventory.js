@@ -1,7 +1,7 @@
 const express = require('express');
 const { requireAuth, requireAdmin, isTechnician } = require('../middleware/auth');
 const fs = require('fs');
-const { parseInventoryFromExcel, updateActualQtyInExcel, exportInventoryToExcel, DEFAULT_INVENTORY_XLSX } = require('../utils/inventoryExcelSync');
+const { parseInventoryFromExcel, updateActualQtyInExcel, updateInventoryItemInExcel, exportInventoryToExcel, DEFAULT_INVENTORY_XLSX } = require('../utils/inventoryExcelSync');
 const { v4: uuidv4 } = require('uuid');
 
 module.exports = (pool) => {
@@ -87,8 +87,8 @@ module.exports = (pool) => {
       if (lowStock) where += ' AND actual_qty <= min_level';
       if (q) {
         params.push(`%${q}%`);
-        // Search by section number OR description (not item_code)
-        where += ` AND (item_description ILIKE $${params.length} OR section ILIKE $${params.length})`;
+        // Search by section number OR description OR item_code
+        where += ` AND (item_description ILIKE $${params.length} OR section ILIKE $${params.length} OR item_code ILIKE $${params.length})`;
       }
 
       const result = await pool.query(
@@ -218,8 +218,7 @@ module.exports = (pool) => {
     }
   });
 
-  // Consume spares for a task (admin/super_admin only for direct consumption)
-  // Technicians must use spare requests for PM tasks
+  // Consume spares for a task - all authenticated users can consume during task execution
   // Body: { task_id, items: [{ item_code, qty_used }] }
   router.post('/consume', requireAuth, async (req, res) => {
     const client = await pool.connect();
@@ -227,17 +226,6 @@ module.exports = (pool) => {
       const { task_id, items } = req.body || {};
       if (!task_id) return res.status(400).json({ error: 'task_id is required' });
       if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items[] is required' });
-
-      // Check if user is technician trying to consume for PM task
-      if (isTechnician(req)) {
-        const taskResult = await client.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
-        if (taskResult.rows.length > 0 && taskResult.rows[0].task_type === 'PM') {
-          await client.query('ROLLBACK');
-          return res.status(403).json({ 
-            error: 'Technicians cannot directly consume spares for PM tasks. Please use spare requests instead.' 
-          });
-        }
-      }
 
       await client.query('BEGIN');
 
@@ -335,26 +323,172 @@ module.exports = (pool) => {
     }
   });
 
-  // Get spares usage with time period filter (daily, weekly, monthly)
+  // Create new inventory item (admin only)
+  router.post('/items', requireAdmin, async (req, res) => {
+    try {
+      const { section, item_code, item_description, part_type, min_level, actual_qty } = req.body;
+      
+      if (!item_code) {
+        return res.status(400).json({ error: 'item_code is required' });
+      }
+
+      // Check if item_code already exists
+      const existing = await pool.query('SELECT id FROM inventory_items WHERE item_code = $1', [item_code]);
+      if (existing.rows.length > 0) {
+        return res.status(400).json({ error: 'Item code already exists' });
+      }
+
+      const result = await pool.query(
+        `INSERT INTO inventory_items (section, item_code, item_description, part_type, min_level, actual_qty)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [
+          section || null,
+          item_code,
+          item_description || null,
+          part_type || null,
+          min_level || 0,
+          actual_qty || 0
+        ]
+      );
+
+      res.status(201).json(result.rows[0]);
+    } catch (e) {
+      if (e.code === '23505') { // Unique violation
+        res.status(400).json({ error: 'Item code already exists' });
+      } else {
+        res.status(500).json({ error: 'Failed to create inventory item', details: e.message });
+      }
+    }
+  });
+
+  // Update inventory item (admin only) - can update all fields including item_code
+  router.put('/items/:item_code', requireAdmin, async (req, res) => {
+    const client = await pool.connect();
+    try {
+      const oldItemCode = req.params.item_code;
+      const { section, item_code, item_description, part_type, min_level, actual_qty } = req.body;
+
+      // Get current item to check if it exists
+      const currentItem = await client.query('SELECT * FROM inventory_items WHERE item_code = $1', [oldItemCode]);
+      if (currentItem.rows.length === 0) {
+        await client.release();
+        return res.status(404).json({ error: 'Inventory item not found' });
+      }
+
+      // If item_code is being changed, check if new code already exists
+      if (item_code !== undefined && item_code !== oldItemCode) {
+        const existing = await client.query('SELECT id FROM inventory_items WHERE item_code = $1', [item_code]);
+        if (existing.rows.length > 0) {
+          await client.release();
+          return res.status(400).json({ error: 'New item code already exists' });
+        }
+      }
+
+      await client.query('BEGIN');
+
+      // Build update query dynamically based on provided fields
+      const updates = [];
+      const values = [];
+      let paramIndex = 1;
+
+      if (section !== undefined) {
+        updates.push(`section = $${paramIndex++}`);
+        values.push(section || null);
+      }
+      if (item_code !== undefined && item_code !== oldItemCode) {
+        updates.push(`item_code = $${paramIndex++}`);
+        values.push(item_code);
+      }
+      if (item_description !== undefined) {
+        updates.push(`item_description = $${paramIndex++}`);
+        values.push(item_description || null);
+      }
+      if (part_type !== undefined) {
+        updates.push(`part_type = $${paramIndex++}`);
+        values.push(part_type || null);
+      }
+      if (min_level !== undefined) {
+        updates.push(`min_level = $${paramIndex++}`);
+        values.push(parseInt(min_level, 10) || 0);
+      }
+      if (actual_qty !== undefined) {
+        updates.push(`actual_qty = $${paramIndex++}`);
+        values.push(parseInt(actual_qty, 10) || 0);
+      }
+
+      if (updates.length === 0) {
+        await client.query('ROLLBACK');
+        await client.release();
+        return res.status(400).json({ error: 'No fields to update' });
+      }
+
+      updates.push(`updated_at = CURRENT_TIMESTAMP`);
+      values.push(oldItemCode);
+
+      const result = await client.query(
+        `UPDATE inventory_items 
+         SET ${updates.join(', ')}
+         WHERE item_code = $${paramIndex}
+         RETURNING *`,
+        values
+      );
+
+      await client.query('COMMIT');
+      await client.release();
+
+      // Sync to Excel with all updated fields
+      const excelUpdates = {};
+      if (section !== undefined) excelUpdates.section = section;
+      if (item_code !== undefined) excelUpdates.item_code = item_code;
+      if (item_description !== undefined) excelUpdates.item_description = item_description;
+      if (part_type !== undefined) excelUpdates.part_type = part_type;
+      if (min_level !== undefined) excelUpdates.min_level = min_level;
+      if (actual_qty !== undefined) excelUpdates.actual_qty = actual_qty;
+
+      try {
+        await updateInventoryItemInExcel(oldItemCode, excelUpdates);
+      } catch (excelError) {
+        console.error('[INVENTORY] Error updating Excel file:', excelError);
+        // Don't fail the request if Excel update fails, but log it
+      }
+
+      res.json(result.rows[0]);
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      await client.release();
+      if (e.code === '23505') { // Unique violation
+        res.status(400).json({ error: 'Item code already exists' });
+      } else {
+        res.status(500).json({ error: 'Failed to update inventory item', details: e.message });
+      }
+    }
+  });
+
+  // Get spares usage with date range filter
   router.get('/usage', requireAuth, async (req, res) => {
     try {
-      const period = String(req.query.period || 'monthly').toLowerCase(); // daily, weekly, monthly
+      const { startDate, endDate } = req.query;
       
       let dateFilter = '';
       const params = [];
+      let paramCount = 1;
       
-      switch (period) {
-        case 'daily':
-          dateFilter = 'WHERE DATE(t.created_at) = CURRENT_DATE';
-          break;
-        case 'weekly':
-          dateFilter = 'WHERE t.created_at >= CURRENT_DATE - INTERVAL \'7 days\'';
-          break;
-        case 'monthly':
-          dateFilter = 'WHERE t.created_at >= CURRENT_DATE - INTERVAL \'30 days\'';
-          break;
-        default:
-          dateFilter = 'WHERE t.created_at >= CURRENT_DATE - INTERVAL \'30 days\'';
+      if (startDate && endDate) {
+        // Use explicit date range
+        dateFilter = `WHERE DATE(t.created_at) >= $${paramCount++} AND DATE(t.created_at) <= $${paramCount++}`;
+        params.push(startDate, endDate);
+      } else if (startDate) {
+        // Only start date provided
+        dateFilter = `WHERE DATE(t.created_at) >= $${paramCount++}`;
+        params.push(startDate);
+      } else if (endDate) {
+        // Only end date provided
+        dateFilter = `WHERE DATE(t.created_at) <= $${paramCount++}`;
+        params.push(endDate);
+      } else {
+        // Default to last 30 days if no dates provided
+        dateFilter = 'WHERE t.created_at >= CURRENT_DATE - INTERVAL \'30 days\'';
       }
 
       const result = await pool.query(

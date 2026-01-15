@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getChecklistTemplates, getChecklistTemplate, updateChecklistTemplateMetadata } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import './ChecklistTemplates.css';
 
 function ChecklistTemplates() {
   const { isAdmin } = useAuth();
@@ -10,6 +11,8 @@ function ChecklistTemplates() {
   const [showDetails, setShowDetails] = useState(false);
   const [lastRevisionDate, setLastRevisionDate] = useState('');
   const [savingRevision, setSavingRevision] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
 
   useEffect(() => {
     loadTemplates();
@@ -112,8 +115,11 @@ function ChecklistTemplates() {
     return (
       <div>
         <div style={{ marginBottom: '20px' }}>
-          <button className="btn btn-secondary" onClick={() => setShowDetails(false)}>
-            ← Back to Templates
+          <button className="btn btn-secondary" onClick={() => {
+            setShowDetails(false);
+            setCurrentPage(1); // Reset to first page when returning
+          }}>
+            Back to Templates
           </button>
         </div>
 
@@ -188,39 +194,102 @@ function ChecklistTemplates() {
         </div>
       ) : (
         <div className="card">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #ddd' }}>
-                <th style={{ padding: '10px', textAlign: 'left' }}>Template Code</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>Template Name</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>Asset Type</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>Task Type</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>Frequency</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {templates.map((template) => (
-                <tr key={template.id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td data-label="Template Code" style={{ padding: '10px' }}>{template.template_code}</td>
-                  <td data-label="Template Name" style={{ padding: '10px' }}>{template.template_name}</td>
-                  <td data-label="Asset Type" style={{ padding: '10px' }}>{template.asset_type}</td>
-                  <td data-label="Task Type" style={{ padding: '10px' }}>
-                    <span className={`task-badge ${template.task_type}`}>{template.task_type}</span>
-                  </td>
-                  <td data-label="Frequency" style={{ padding: '10px' }}>{template.frequency || 'N/A'}</td>
-                  <td data-label="Action" style={{ padding: '10px' }}>
-                    <button
-                      className="btn btn-primary"
-                      onClick={() => handleViewDetails(template.id)}
-                    >
-                      View Details
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {(() => {
+            const totalPages = Math.ceil(templates.length / itemsPerPage);
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const currentTemplates = templates.slice(startIndex, endIndex);
+            const startItem = templates.length > 0 ? startIndex + 1 : 0;
+            const endItem = Math.min(endIndex, templates.length);
+
+            return (
+              <>
+                <table className="checklist-templates-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #ddd' }}>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Template Code</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Template Name</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Asset Type</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Task Type</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Frequency</th>
+                      <th style={{ padding: '10px', textAlign: 'left' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {currentTemplates.map((template) => (
+                      <tr key={template.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td data-label="Template Code" style={{ padding: '10px' }}>{template.template_code}</td>
+                        <td data-label="Template Name" style={{ padding: '10px' }}>{template.template_name}</td>
+                        <td data-label="Asset Type" style={{ padding: '10px' }}>{template.asset_type}</td>
+                        <td data-label="Task Type" style={{ padding: '10px' }}>
+                          <span className={`task-badge ${template.task_type}`}>{template.task_type}</span>
+                        </td>
+                        <td data-label="Frequency" style={{ padding: '10px' }}>{template.frequency || 'N/A'}</td>
+                        <td data-label="Action" style={{ padding: '10px' }}>
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => handleViewDetails(template.id)}
+                          >
+                            View Details
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center', 
+                  marginTop: '15px',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                  paddingTop: '12px',
+                  borderTop: '1px solid #eee'
+                }}>
+                  <div style={{ fontSize: '12px', color: '#666' }}>
+                    Showing {startItem}-{endItem} of {templates.length} template{templates.length !== 1 ? 's' : ''}
+                  </div>
+                  {totalPages > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        style={{
+                          fontSize: '18px',
+                          color: currentPage === 1 ? '#ccc' : '#007bff',
+                          cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                          userSelect: 'none',
+                          padding: '4px 8px',
+                          lineHeight: '1'
+                        }}
+                        title="Previous page"
+                      >
+                        ‹
+                      </span>
+                      <span style={{ fontSize: '12px', color: '#666', padding: '0 4px' }}>
+                        Page {currentPage} of {totalPages}
+                      </span>
+                      <span
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        style={{
+                          fontSize: '18px',
+                          color: currentPage === totalPages ? '#ccc' : '#007bff',
+                          cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                          userSelect: 'none',
+                          padding: '4px 8px',
+                          lineHeight: '1'
+                        }}
+                        title="Next page"
+                      >
+                        ›
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

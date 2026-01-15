@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { updateProfile } from '../api/api';
+import { changePassword } from '../api/api';
 import './PasswordChangeModal.css';
 
 function PasswordChangeModal({ isOpen, onClose, onSuccess }) {
@@ -129,10 +129,10 @@ function PasswordChangeModal({ isOpen, onClose, onSuccess }) {
     setSubmitting(true);
 
     try {
-      await updateProfile({
-        password: formData.new_password,
-        current_password: formData.current_password
-      });
+      await changePassword(
+        formData.current_password,
+        formData.new_password
+      );
 
       // Clear form
       setFormData({
@@ -160,17 +160,17 @@ function PasswordChangeModal({ isOpen, onClose, onSuccess }) {
   const strengthInfo = getStrengthLabel(passwordStrength.score);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" style={{ pointerEvents: 'auto' }}>
       <div className="modal-content password-change-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Change Your Password</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
+          {/* Remove close button - password change is mandatory */}
         </div>
 
         <div className="modal-body">
           <div className="alert alert-warning" style={{ marginBottom: '20px' }}>
-            <strong>⚠️ Security Notice:</strong> You are using the default password. 
-            Please change it to a strong, unique password to secure your account.
+            <strong>Security Notice:</strong> You are using the default password. 
+            You must change it to a strong, unique password before you can access the application.
           </div>
 
           <form onSubmit={handleSubmit}>
@@ -280,18 +280,12 @@ function PasswordChangeModal({ isOpen, onClose, onSuccess }) {
             )}
 
             <div className="modal-footer" style={{ marginTop: '20px', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={onClose}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
+              {/* Remove Cancel button - password change is mandatory */}
               <button
                 type="submit"
                 className="btn btn-primary"
                 disabled={submitting || passwordStrength.score < 3}
+                style={{ width: '100%' }}
               >
                 {submitting ? 'Changing...' : 'Change Password'}
               </button>

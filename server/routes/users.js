@@ -4,7 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { requireAuth, requireAdmin, requireSuperAdmin, isSuperAdmin } = require('../middleware/auth');
+const { requireAuth, requirePasswordChange, requireAdmin, requireSuperAdmin, isSuperAdmin } = require('../middleware/auth');
 const { validateCreateUser, validateUpdateUser } = require('../middleware/inputValidation');
 // Rate limiting removed for frequent use
 // const { sensitiveOperationLimiter } = require('../middleware/rateLimiter');
@@ -585,16 +585,93 @@ module.exports = (pool) => {
     }
   });
 
+  // Delete profile image
+  router.delete('/profile/me/avatar', requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+
+      // Get old profile image to delete it
+      const oldUserResult = await pool.query(
+        'SELECT profile_image FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (oldUserResult.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const oldProfileImage = oldUserResult.rows[0]?.profile_image;
+
+      // Update user's profile_image to null
+      const result = await pool.query(
+        `UPDATE users 
+         SET profile_image = NULL, updated_at = CURRENT_TIMESTAMP 
+         WHERE id = $1 
+         RETURNING id, username, email, full_name, profile_image`,
+        [userId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Delete old profile image file if it exists
+      if (oldProfileImage) {
+        // Normalize path: remove leading slash if present, then join with server directory
+        // Stored path: /uploads/profiles/filename.jpg
+        // Actual path: server/uploads/profiles/filename.jpg (relative to project root)
+        // __dirname is server/routes, so __dirname/.. is server/
+        const normalizedPath = oldProfileImage.startsWith('/') 
+          ? oldProfileImage.substring(1) 
+          : oldProfileImage;
+        const oldImagePath = path.join(__dirname, '..', normalizedPath);
+        
+        console.log('[PROFILE IMAGE] Attempting to delete:', oldImagePath);
+        
+        if (fs.existsSync(oldImagePath)) {
+          try {
+            fs.unlinkSync(oldImagePath);
+            console.log('[PROFILE IMAGE] Successfully deleted profile image file:', oldImagePath);
+          } catch (unlinkError) {
+            console.error('[PROFILE IMAGE] Error deleting profile image file:', unlinkError);
+            // Don't fail the request if file deletion fails, but log the error
+          }
+        } else {
+          console.warn('[PROFILE IMAGE] Profile image file not found at:', oldImagePath);
+          console.warn('[PROFILE IMAGE] Original path from database:', oldProfileImage);
+        }
+      }
+
+      res.json({
+        message: 'Profile image removed successfully',
+        profile_image: null
+      });
+    } catch (error) {
+      console.error('[PROFILE IMAGE] Error removing profile image:', error);
+      res.status(500).json({ 
+        error: 'Failed to remove profile image', 
+        details: error.message 
+      });
+    }
+  });
+
   // Upload profile image
   router.post('/profile/me/avatar', requireAuth, (req, res, next) => {
     profileImageUpload.single('image')(req, res, (err) => {
       if (err) {
         console.error('[PROFILE IMAGE] Multer error:', err);
         if (err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(400).json({ error: 'File size too large. Maximum size is 5MB.' });
+          return res.status(400).json({ error: 'File size too large. Max size: 5MB. Supported formats: JPEG, PNG, GIF, WebP.' });
         }
         if (err.message) {
-          return res.status(400).json({ error: err.message });
+          // Multer fileFilter error already includes format info, but ensure consistency
+          const errorMsg = err.message.includes('image files') 
+            ? err.message + ' Max size: 5MB.'
+            : err.message;
+          return res.status(400).json({ error: errorMsg });
         }
         return res.status(400).json({ error: 'File upload error', details: err.message || err.toString() });
       }
@@ -662,15 +739,24 @@ module.exports = (pool) => {
 
       // Delete old profile image if it exists
       if (oldProfileImage) {
-        const oldImagePath = path.join(__dirname, '..', oldProfileImage);
+        // Normalize path: remove leading slash if present
+        const normalizedPath = oldProfileImage.startsWith('/') 
+          ? oldProfileImage.substring(1) 
+          : oldProfileImage;
+        const oldImagePath = path.join(__dirname, '..', normalizedPath);
+        
+        console.log('[PROFILE IMAGE] Attempting to delete old image:', oldImagePath);
+        
         if (fs.existsSync(oldImagePath)) {
           try {
             fs.unlinkSync(oldImagePath);
-            console.log('[PROFILE IMAGE] Deleted old profile image:', oldImagePath);
+            console.log('[PROFILE IMAGE] Successfully deleted old profile image:', oldImagePath);
           } catch (unlinkError) {
             console.error('[PROFILE IMAGE] Error deleting old image:', unlinkError);
             // Don't fail the request if old image deletion fails
           }
+        } else {
+          console.warn('[PROFILE IMAGE] Old profile image file not found at:', oldImagePath);
         }
       }
 

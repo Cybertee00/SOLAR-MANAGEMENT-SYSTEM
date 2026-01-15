@@ -104,15 +104,26 @@ module.exports = (pool) => {
     try {
       const userId = req.session.userId;
 
-      const result = await pool.query(
+      // First, get the count of unread notifications
+      const countResult = await pool.query(
+        `SELECT COUNT(*) as count FROM notifications 
+         WHERE user_id = $1 AND is_read = false`,
+        [userId]
+      );
+      const count = parseInt(countResult.rows[0].count, 10);
+
+      // Then update all unread notifications
+      await pool.query(
         `UPDATE notifications 
          SET is_read = true, read_at = CURRENT_TIMESTAMP 
-         WHERE user_id = $1 AND is_read = false
-         RETURNING COUNT(*)`,
+         WHERE user_id = $1 AND is_read = false`,
         [userId]
       );
 
-      res.json({ message: 'All notifications marked as read' });
+      res.json({ 
+        message: 'All notifications marked as read',
+        count: count
+      });
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
       res.status(500).json({ error: 'Failed to mark all notifications as read' });

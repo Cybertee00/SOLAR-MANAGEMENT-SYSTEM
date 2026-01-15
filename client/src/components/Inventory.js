@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getInventoryItems, adjustInventory, downloadInventoryExcel, getSparesUsage } from '../api/api';
+import { getInventoryItems, adjustInventory, downloadInventoryExcel, getSparesUsage, createInventoryItem, updateInventoryItem } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 
 function Inventory() {
@@ -16,9 +16,26 @@ function Inventory() {
   const [note, setNote] = useState('');
   const [expandedSections, setExpandedSections] = useState(new Set()); // Track which sections are expanded
   const [viewMode, setViewMode] = useState('inventory'); // 'inventory' or 'usage'
-  const [usagePeriod, setUsagePeriod] = useState('monthly'); // 'daily', 'weekly', 'monthly'
+  const [usageDateRange, setUsageDateRange] = useState({ startDate: '', endDate: '' });
   const [sparesUsage, setSparesUsage] = useState([]);
   const [loadingUsage, setLoadingUsage] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [newItem, setNewItem] = useState({
+    section: '',
+    item_code: '',
+    item_description: '',
+    part_type: '',
+    min_level: 0,
+    actual_qty: 0
+  });
+  const [editForm, setEditForm] = useState({
+    section: '',
+    item_code: '',
+    item_description: '',
+    part_type: '',
+    min_level: 0
+  });
 
   const load = useCallback(async (searchQuery, lowStockFilter) => {
     try {
@@ -145,10 +162,13 @@ function Inventory() {
     }
   };
 
-  const loadSparesUsage = useCallback(async (period) => {
+  const loadSparesUsage = useCallback(async (startDate, endDate) => {
     try {
       setLoadingUsage(true);
-      const resp = await getSparesUsage({ period });
+      const params = {};
+      if (startDate) params.startDate = startDate;
+      if (endDate) params.endDate = endDate;
+      const resp = await getSparesUsage(params);
       setSparesUsage(resp.data || []);
     } catch (e) {
       console.error('Failed to load spares usage:', e);
@@ -160,37 +180,50 @@ function Inventory() {
 
   useEffect(() => {
     if (viewMode === 'usage') {
-      loadSparesUsage(usagePeriod);
+      loadSparesUsage(usageDateRange.startDate, usageDateRange.endDate);
     }
-  }, [viewMode, usagePeriod, loadSparesUsage]);
+  }, [viewMode, usageDateRange.startDate, usageDateRange.endDate, loadSparesUsage]);
 
   if (loading && viewMode === 'inventory') return <div className="loading">Loading inventory...</div>;
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-        <h2>Inventory Count</h2>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: '8px', border: '1px solid var(--md-border)', borderRadius: '8px', padding: '4px' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '15px' }}>
+        <h2 style={{ margin: 0 }}>Inventory Count</h2>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '4px', border: '1px solid var(--md-border)', borderRadius: '6px', padding: '2px' }}>
             <button
               className={`btn btn-sm ${viewMode === 'inventory' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setViewMode('inventory')}
-              style={{ minWidth: '100px' }}
+              style={{ minWidth: '85px', padding: '6px 12px', fontSize: '13px' }}
             >
               Inventory
             </button>
             <button
               className={`btn btn-sm ${viewMode === 'usage' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setViewMode('usage')}
-              style={{ minWidth: '100px' }}
+              style={{ minWidth: '85px', padding: '6px 12px', fontSize: '13px' }}
             >
-              Spares Usage
+              Usage
             </button>
           </div>
           {isAdmin() && viewMode === 'inventory' && (
-            <button className="btn btn-primary" onClick={handleDownload}>
-              Download
-            </button>
+            <>
+              <button 
+                className="btn btn-sm btn-primary" 
+                onClick={() => setShowAddModal(true)}
+                style={{ padding: '6px 12px', fontSize: '13px' }}
+              >
+                Add New
+              </button>
+              <button 
+                className="btn btn-sm btn-primary" 
+                onClick={handleDownload}
+                style={{ padding: '6px 12px', fontSize: '13px' }}
+              >
+                Download
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -199,20 +232,36 @@ function Inventory() {
 
       {viewMode === 'usage' ? (
         <div>
-          <div className="card" style={{ marginBottom: '15px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-              <h3 style={{ marginTop: 0 }}>Spares Usage Report</h3>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <label style={{ fontSize: '14px', fontWeight: 500 }}>Period:</label>
-                <select
-                  value={usagePeriod}
-                  onChange={(e) => setUsagePeriod(e.target.value)}
-                  style={{ padding: '8px 12px', borderRadius: '6px', border: '2px solid var(--md-border)', fontSize: '14px' }}
+          <div className="card" style={{ marginBottom: '12px', padding: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+              <h3 style={{ marginTop: 0, marginBottom: 0, fontSize: '16px', fontWeight: '600' }}>Spares Usage Report</h3>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 500, whiteSpace: 'nowrap' }}>Start Date:</label>
+                  <input
+                    type="date"
+                    value={usageDateRange.startDate}
+                    onChange={(e) => setUsageDateRange({ ...usageDateRange, startDate: e.target.value })}
+                    style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid var(--md-border)', fontSize: '13px' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 500, whiteSpace: 'nowrap' }}>End Date:</label>
+                  <input
+                    type="date"
+                    value={usageDateRange.endDate}
+                    onChange={(e) => setUsageDateRange({ ...usageDateRange, endDate: e.target.value })}
+                    min={usageDateRange.startDate || undefined}
+                    style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid var(--md-border)', fontSize: '13px' }}
+                  />
+                </div>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => setUsageDateRange({ startDate: '', endDate: '' })}
+                  style={{ padding: '6px 12px', fontSize: '13px', whiteSpace: 'nowrap' }}
                 >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
+                  Clear
+                </button>
               </div>
             </div>
           </div>
@@ -222,7 +271,7 @@ function Inventory() {
           ) : sparesUsage.length === 0 ? (
             <div className="card">
               <p style={{ textAlign: 'center', color: '#666', padding: '40px' }}>
-                No spares usage found for the selected period.
+                No spares usage found{usageDateRange.startDate || usageDateRange.endDate ? ' for the selected date range' : ''}.
               </p>
             </div>
           ) : (
@@ -270,7 +319,7 @@ function Inventory() {
             type="text"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by section number or description..."
+            placeholder="Search by item code, section number or description..."
             style={{
               flex: 1,
               minWidth: '300px',
@@ -291,22 +340,22 @@ function Inventory() {
               }
             }}
           />
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px', whiteSpace: 'nowrap' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', whiteSpace: 'nowrap' }}>
             <input
               type="checkbox"
               checked={lowOnly}
               onChange={(e) => setLowOnly(e.target.checked)}
-              style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
             />
             Low stock only
           </label>
           <button
-            className="btn btn-primary"
+            className="btn btn-sm btn-primary"
             onClick={() => {
               if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
               load(q, lowOnly);
             }}
-            style={{ padding: '12px 24px', fontSize: '15px', whiteSpace: 'nowrap' }}
+            style={{ padding: '8px 16px', fontSize: '13px', whiteSpace: 'nowrap' }}
           >
             Search
           </button>
@@ -320,6 +369,7 @@ function Inventory() {
                 if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
                 load('', lowOnly);
               }}
+              style={{ padding: '4px 10px', fontSize: '12px' }}
             >
               Clear Search
             </button>
@@ -328,11 +378,29 @@ function Inventory() {
       </div>
 
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-          <h3 style={{ marginTop: 0 }}>Items ({items.length})</h3>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="btn btn-sm btn-secondary" onClick={expandAll}>Expand All</button>
-            <button className="btn btn-sm btn-secondary" onClick={collapseAll}>Collapse All</button>
+        <style>{`
+          @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+          }
+        `}</style>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h3 style={{ marginTop: 0, marginBottom: 0, fontSize: '18px' }}>Items ({items.length})</h3>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button 
+              className="btn btn-sm btn-secondary" 
+              onClick={expandAll}
+              style={{ padding: '5px 10px', fontSize: '12px' }}
+            >
+              Expand All
+            </button>
+            <button 
+              className="btn btn-sm btn-secondary" 
+              onClick={collapseAll}
+              style={{ padding: '5px 10px', fontSize: '12px' }}
+            >
+              Collapse All
+            </button>
           </div>
         </div>
 
@@ -343,51 +411,115 @@ function Inventory() {
               <div
                 onClick={() => toggleSection(group.section)}
                 style={{
-                  fontWeight: 700,
+                  fontWeight: 600,
                   color: '#333',
-                  marginBottom: '8px',
+                  marginBottom: '6px',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px',
+                  gap: '6px',
+                  padding: '6px 10px',
                   background: '#f5f5f5',
                   borderRadius: '4px',
-                  userSelect: 'none'
+                  userSelect: 'none',
+                  fontSize: '14px'
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.background = '#e9e9e9'}
                 onMouseLeave={(e) => e.currentTarget.style.background = '#f5f5f5'}
               >
-                <span style={{ fontSize: '14px', transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                <span style={{ fontSize: '12px', transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
                   ▶
                 </span>
                 <span>{group.section}</span>
-                <span style={{ color: '#777', fontWeight: 500 }}>({group.items.length})</span>
+                <span style={{ color: '#777', fontWeight: 500, fontSize: '13px' }}>({group.items.length})</span>
+                {group.items.some(it => (it.actual_qty ?? 0) < (it.min_level ?? 0)) && (
+                  <span 
+                    style={{
+                      display: 'inline-block',
+                      fontSize: '18px',
+                      animation: 'blink 1.5s infinite',
+                      cursor: 'help',
+                      marginLeft: 'auto'
+                    }}
+                    title={`Warning: Some items in this section are below minimum quantity`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    ⚠️
+                  </span>
+                )}
               </div>
               {isExpanded && (
                 <div className="table-responsive">
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr style={{ borderBottom: '2px solid #ddd' }}>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Item Code</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Description</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Min</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Actual Qty</th>
-                        {isAdmin() && <th style={{ padding: '10px', textAlign: 'left' }}>Action</th>}
+                      <tr style={{ borderBottom: '1px solid #ddd' }}>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>Location</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>Item Code</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>Description</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>Min</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>Actual Qty</th>
+                        {isAdmin() && <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
                       {group.items.map((it) => {
-                        const low = (it.actual_qty ?? 0) <= (it.min_level ?? 0);
+                        const actualQty = it.actual_qty ?? 0;
+                        const minLevel = it.min_level ?? 0;
+                        const low = actualQty < minLevel; // Below minimum
+                        const atMinimum = actualQty === minLevel && minLevel > 0; // At minimum (not zero)
+                        
+                        // Extract section number from section string (e.g., "AC Meter Cabinet (AC Meter Cabinet) | 56" -> "56")
+                        const extractSectionNumber = (sectionStr) => {
+                          if (!sectionStr) return '-';
+                          // Look for number after "| " separator
+                          const match = sectionStr.match(/\|\s*(\d+)/);
+                          if (match) return match[1];
+                          // If no separator, try to find any number in the string
+                          const numberMatch = sectionStr.match(/(\d+)/);
+                          return numberMatch ? numberMatch[1] : sectionStr;
+                        };
+                        const sectionNumber = extractSectionNumber(it.section);
+                        
+                        // Determine background color: yellow for below minimum, light blue for at minimum
+                        let rowBackground = 'transparent';
+                        if (low) {
+                          rowBackground = '#fff3cd'; // Yellow - below minimum
+                        } else if (atMinimum) {
+                          rowBackground = '#b3e5fc'; // Light blue - at minimum (equal to minimum level)
+                        }
+                        
                         return (
-                          <tr key={it.id} style={{ borderBottom: '1px solid #eee', background: low ? '#fff3cd' : 'transparent' }}>
-                            <td style={{ padding: '10px', fontWeight: 'bold' }}>{it.item_code}</td>
-                            <td style={{ padding: '10px' }}>{it.item_description || '-'}</td>
-                            <td style={{ padding: '10px' }}>{it.min_level ?? 0}</td>
-                            <td style={{ padding: '10px' }}>{it.actual_qty ?? 0}</td>
+                          <tr key={it.id} style={{ borderBottom: '1px solid #eee', background: rowBackground }}>
+                            <td data-label="Location" style={{ padding: '8px 10px', fontSize: '13px', color: '#666', fontFamily: 'monospace' }}>{sectionNumber}</td>
+                            <td style={{ padding: '8px 10px', fontWeight: '600', fontSize: '13px' }}>{it.item_code}</td>
+                            <td style={{ padding: '8px 10px', fontSize: '13px' }}>{it.item_description || '-'}</td>
+                            <td style={{ padding: '8px 10px', fontSize: '13px' }}>{it.min_level ?? 0}</td>
+                            <td style={{ padding: '8px 10px', fontSize: '13px' }}>{it.actual_qty ?? 0}</td>
                             {isAdmin() && (
-                              <td style={{ padding: '10px' }}>
-                                <button className="btn btn-sm btn-primary" onClick={() => openAdjust(it)} title="Restock when new stock arrives">
+                              <td style={{ padding: '8px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                <button 
+                                  className="btn btn-sm btn-secondary" 
+                                  onClick={() => {
+                                    setEditingItem(it);
+                                    setEditForm({
+                                      section: it.section || '',
+                                      item_code: it.item_code || '',
+                                      item_description: it.item_description || '',
+                                      part_type: it.part_type || '',
+                                      min_level: it.min_level || 0
+                                    });
+                                  }}
+                                  title="Edit spare details"
+                                  style={{ padding: '4px 10px', fontSize: '12px' }}
+                                >
+                                  Edit
+                                </button>
+                                <button 
+                                  className="btn btn-sm btn-primary" 
+                                  onClick={() => openAdjust(it)} 
+                                  title="Restock when new stock arrives"
+                                  style={{ padding: '4px 10px', fontSize: '12px' }}
+                                >
                                   Restock
                                 </button>
                               </td>
@@ -405,49 +537,45 @@ function Inventory() {
       </div>
 
       {adjusting && (
-        <div ref={adjustFormRef} className="card" style={{ marginTop: '15px', border: '2px solid var(--md-info)', boxShadow: 'var(--md-shadow-lg)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--md-border)' }}>
+        <div ref={adjustFormRef} className="card" style={{ marginTop: '12px', border: '1px solid var(--md-info)', padding: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', paddingBottom: '10px', borderBottom: '1px solid var(--md-border)' }}>
             <div>
-              <h3 style={{ marginTop: 0, marginBottom: '4px', color: 'var(--md-info)' }}>Restock Item: {adjusting.item_code}</h3>
-              <p style={{ color: '#666', margin: 0, fontSize: '14px' }}>{adjusting.item_description}</p>
+              <h3 style={{ marginTop: 0, marginBottom: '4px', color: 'var(--md-info)', fontSize: '17px' }}>Restock Item: {adjusting.item_code}</h3>
+              <p style={{ color: '#666', margin: 0, fontSize: '13px' }}>{adjusting.item_description}</p>
             </div>
             <button 
               className="btn btn-sm btn-secondary" 
               onClick={() => setAdjusting(null)}
-              style={{ minWidth: 'auto', padding: '8px 16px' }}
+              style={{ padding: '5px 12px', fontSize: '12px' }}
             >
-              ✕ Close
+              Close
             </button>
           </div>
           
-          <div style={{ background: '#f8f9fa', padding: '12px', borderRadius: '8px', marginBottom: '16px', borderLeft: '4px solid var(--md-info)' }}>
-            <strong style={{ color: 'var(--md-info)', display: 'block', marginBottom: '4px' }}>ℹ️ Note:</strong>
-            <p style={{ margin: 0, fontSize: '13px', color: '#666' }}>
-              Use this form <strong>only when new stock arrives from suppliers</strong>. When spares are approved for use in PM/CM tasks (via spare requests), they are automatically deducted from the available stock (Actual Qty).
+          <div style={{ background: '#f8f9fa', padding: '10px', borderRadius: '4px', marginBottom: '14px', borderLeft: '3px solid var(--md-info)' }}>
+            <p style={{ margin: 0, fontSize: '12px', color: '#666' }}>
+              Use this form only when new stock arrives from suppliers. Spares used in tasks are automatically deducted.
             </p>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
             <div>
               <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Current Stock</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--md-text-dark)' }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', color: 'var(--md-text-dark)' }}>
                 {adjusting.actual_qty ?? 0}
               </div>
             </div>
             <div>
               <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Minimum Level</div>
-              <div style={{ fontSize: '18px', fontWeight: '600', color: (adjusting.actual_qty ?? 0) <= (adjusting.min_level ?? 0) ? 'var(--md-error)' : 'var(--md-success)' }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: (adjusting.actual_qty ?? 0) <= (adjusting.min_level ?? 0) ? 'var(--md-error)' : 'var(--md-success)' }}>
                 {adjusting.min_level ?? 0}
               </div>
             </div>
           </div>
 
-          <div className="form-group">
-            <label>
+          <div className="form-group" style={{ marginBottom: '12px' }}>
+            <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>
               Quantity to Add <span style={{ color: 'var(--md-error)' }}>*</span>
-              <span style={{ fontSize: '12px', color: '#666', fontWeight: 'normal', display: 'block', marginTop: '4px' }}>
-                Enter positive number (e.g., 10 to add 10 units)
-              </span>
             </label>
             <input 
               type="number" 
@@ -461,35 +589,278 @@ function Inventory() {
               }} 
               placeholder="e.g. 10" 
               min="1"
-              style={{ fontSize: '18px', padding: '14px 16px', fontWeight: '500' }}
+              style={{ width: '100%', fontSize: '14px', padding: '8px 12px', border: '1px solid #ddd', borderRadius: '4px' }}
             />
           </div>
-          <div className="form-group">
-            <label>Note (optional)</label>
+          <div className="form-group" style={{ marginBottom: '16px' }}>
+            <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Note (optional)</label>
             <input 
               value={note} 
               onChange={(e) => setNote(e.target.value)} 
               placeholder="e.g. New stock received from supplier..." 
+              style={{ width: '100%', fontSize: '14px', padding: '8px 12px', border: '1px solid #ddd', borderRadius: '4px' }}
             />
           </div>
-          <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-            <button className="btn btn-primary" onClick={submitAdjust} style={{ flex: 1 }}>
-              ✓ Save Restock
+          <div style={{ display: 'flex', gap: '8px', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #eee' }}>
+            <button 
+              className="btn btn-sm btn-primary" 
+              onClick={submitAdjust} 
+              style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
+            >
+              Save Restock
             </button>
-            <button className="btn btn-secondary" onClick={() => setAdjusting(null)} style={{ flex: 1 }}>
+            <button 
+              className="btn btn-sm btn-secondary" 
+              onClick={() => setAdjusting(null)} 
+              style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
+            >
               Cancel
             </button>
           </div>
-          <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '11px', color: '#dc3545', textAlign: 'center' }}>
-            When spares are approved for use in PM/CM tasks (via spare requests), they are automatically deducted from the available stock (Actual Qty). The "Restock" button should only be used when new stock arrives from suppliers.
-          </p>
         </div>
       )}
 
       {!adjusting && viewMode === 'inventory' && (
         <p style={{ marginTop: '16px', marginBottom: 0, fontSize: '11px', color: '#dc3545', textAlign: 'center' }}>
-          When spares are approved for use in PM/CM tasks (via spare requests), they are automatically deducted from the available stock (Actual Qty). The "Restock" button should only be used when new stock arrives from suppliers.
+          When spares are selected and used during PM/PCM tasks, they are automatically deducted from the available stock (Actual Qty). The "Restock" button should only be used when new stock arrives from suppliers.
         </p>
+      )}
+
+      {/* Add New Spare Modal */}
+      {showAddModal && (
+        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '550px', padding: '20px' }}>
+            <div className="modal-header" style={{ marginBottom: '16px', paddingBottom: '12px' }}>
+              <h2 style={{ margin: 0, fontSize: '20px' }}>Add New Spare</h2>
+              <button className="modal-close" onClick={() => setShowAddModal(false)} style={{ fontSize: '24px', width: '28px', height: '28px' }}>×</button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                await createInventoryItem(newItem);
+                setShowAddModal(false);
+                setNewItem({ section: '', item_code: '', item_description: '', part_type: '', min_level: 0, actual_qty: 0 });
+                await load(q, lowOnly);
+              } catch (error) {
+                alert('Failed to create spare: ' + (error.response?.data?.error || error.message));
+              }
+            }}>
+              <div className="form-group" style={{ marginBottom: '14px' }}>
+                <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Item Code *</label>
+                <input
+                  type="text"
+                  value={newItem.item_code}
+                  onChange={(e) => setNewItem({ ...newItem, item_code: e.target.value.toUpperCase() })}
+                  required
+                  placeholder="e.g., SP-001"
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '14px' }}>
+                <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Description</label>
+                <input
+                  type="text"
+                  value={newItem.item_description}
+                  onChange={(e) => setNewItem({ ...newItem, item_description: e.target.value })}
+                  placeholder="Item description"
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Section</label>
+                  <input
+                    type="text"
+                    value={newItem.section}
+                    onChange={(e) => setNewItem({ ...newItem, section: e.target.value })}
+                    placeholder="e.g., Section 1"
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Part Type</label>
+                  <input
+                    type="text"
+                    value={newItem.part_type}
+                    onChange={(e) => setNewItem({ ...newItem, part_type: e.target.value })}
+                    placeholder="e.g., Spare Part"
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Minimum Level</label>
+                  <input
+                    type="number"
+                    value={newItem.min_level}
+                    onChange={(e) => setNewItem({ ...newItem, min_level: parseInt(e.target.value, 10) || 0 })}
+                    min="0"
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Initial Quantity</label>
+                  <input
+                    type="number"
+                    value={newItem.actual_qty}
+                    onChange={(e) => setNewItem({ ...newItem, actual_qty: parseInt(e.target.value, 10) || 0 })}
+                    min="0"
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #eee' }}>
+                <button 
+                  type="submit" 
+                  className="btn btn-sm btn-primary" 
+                  style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
+                >
+                  Create Spare
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-sm btn-secondary" 
+                  onClick={() => setShowAddModal(false)} 
+                  style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Spare Modal */}
+      {editingItem && (
+        <div className="modal-overlay" onClick={() => setEditingItem(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px', padding: '20px' }}>
+            <div className="modal-header" style={{ marginBottom: '16px', paddingBottom: '12px' }}>
+              <h2 style={{ margin: 0, fontSize: '20px' }}>Edit Spare</h2>
+              <button className="modal-close" onClick={() => setEditingItem(null)} style={{ fontSize: '24px', width: '28px', height: '28px' }}>×</button>
+            </div>
+            <div style={{ marginBottom: '16px', padding: '10px', background: '#f8f9fa', borderRadius: '4px', fontSize: '12px', color: '#666' }}>
+              <p style={{ margin: 0 }}>Update only the fields you want to change. The Excel sheet will be updated automatically. Use the "Restock" button to update actual quantity.</p>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                // Build update object with only changed fields
+                const updates = {};
+                if (editForm.section !== (editingItem.section || '')) {
+                  updates.section = editForm.section;
+                }
+                if (editForm.item_code !== editingItem.item_code) {
+                  updates.item_code = editForm.item_code.toUpperCase();
+                }
+                if (editForm.item_description !== (editingItem.item_description || '')) {
+                  updates.item_description = editForm.item_description;
+                }
+                if (editForm.part_type !== (editingItem.part_type || '')) {
+                  updates.part_type = editForm.part_type;
+                }
+                if (parseInt(editForm.min_level, 10) !== (editingItem.min_level || 0)) {
+                  updates.min_level = parseInt(editForm.min_level, 10) || 0;
+                }
+
+                if (Object.keys(updates).length === 0) {
+                  alert('No changes detected. Please modify at least one field.');
+                  return;
+                }
+
+                await updateInventoryItem(editingItem.item_code, updates);
+                setEditingItem(null);
+                setEditForm({ section: '', item_code: '', item_description: '', part_type: '', min_level: 0 });
+                await load(q, lowOnly);
+              } catch (error) {
+                alert('Failed to update spare: ' + (error.response?.data?.error || error.message));
+              }
+            }}>
+              <div className="form-group" style={{ marginBottom: '14px' }}>
+                <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Item Code *</label>
+                <input
+                  type="text"
+                  value={editForm.item_code}
+                  onChange={(e) => setEditForm({ ...editForm, item_code: e.target.value.toUpperCase() })}
+                  required
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
+                <small style={{ color: '#666', marginTop: '4px', display: 'block', fontSize: '11px' }}>
+                  Current: {editingItem.item_code}
+                </small>
+              </div>
+              <div className="form-group" style={{ marginBottom: '14px' }}>
+                <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Description</label>
+                <input
+                  type="text"
+                  value={editForm.item_description}
+                  onChange={(e) => setEditForm({ ...editForm, item_description: e.target.value })}
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
+                <small style={{ color: '#666', marginTop: '4px', display: 'block', fontSize: '11px' }}>
+                  Current: {editingItem.item_description || '-'}
+                </small>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Section</label>
+                  <input
+                    type="text"
+                    value={editForm.section}
+                    onChange={(e) => setEditForm({ ...editForm, section: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  />
+                  <small style={{ color: '#666', marginTop: '4px', display: 'block', fontSize: '11px' }}>
+                    Current: {editingItem.section || '-'}
+                  </small>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Part Type</label>
+                  <input
+                    type="text"
+                    value={editForm.part_type}
+                    onChange={(e) => setEditForm({ ...editForm, part_type: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                  />
+                  <small style={{ color: '#666', marginTop: '4px', display: 'block', fontSize: '11px' }}>
+                    Current: {editingItem.part_type || '-'}
+                  </small>
+                </div>
+              </div>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', marginBottom: '6px', display: 'block', fontWeight: '500' }}>Minimum Level</label>
+                <input
+                  type="number"
+                  value={editForm.min_level}
+                  onChange={(e) => setEditForm({ ...editForm, min_level: parseInt(e.target.value, 10) || 0 })}
+                  min="0"
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
+                />
+                <small style={{ color: '#666', marginTop: '4px', display: 'block', fontSize: '11px' }}>
+                  Current: {editingItem.min_level || 0}
+                </small>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #eee' }}>
+                <button 
+                  type="submit" 
+                  className="btn btn-sm btn-primary" 
+                  style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
+                >
+                  Update Spare
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-sm btn-secondary" 
+                  onClick={() => setEditingItem(null)} 
+                  style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
         </>
       )}

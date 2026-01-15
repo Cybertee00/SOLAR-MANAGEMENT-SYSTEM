@@ -4,19 +4,24 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { getUnreadNotificationCount } from './api/api';
 import Dashboard from './components/Dashboard';
 import Tasks from './components/Tasks';
+import Inspection from './components/Inspection';
 import TaskDetail from './components/TaskDetail';
 import ChecklistForm from './components/ChecklistForm';
-import Assets from './components/Assets';
 import CMLetters from './components/CMLetters';
 import ChecklistTemplates from './components/ChecklistTemplates';
 import Inventory from './components/Inventory';
 import Login from './components/Login';
 import UserManagement from './components/UserManagement';
-import SpareRequests from './components/SpareRequests';
 import Profile from './components/Profile';
+import LicenseManagement from './components/LicenseManagement';
 import Notifications from './components/Notifications';
+import Calendar from './components/Calendar';
+import Plant from './components/Plant';
 import ProtectedRoute from './components/ProtectedRoute';
 import PasswordChangeModal from './components/PasswordChangeModal';
+import LicenseStatus from './components/LicenseStatus';
+import OfflineIndicator from './components/OfflineIndicator';
+import syncManager from './utils/syncManager';
 import './App.css';
 
 function App() {
@@ -32,7 +37,7 @@ function App() {
 }
 
 function AppContent() {
-  const { user } = useAuth();
+  const { user, checkAuth } = useAuth();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
   // Check if user needs to change password on mount or when user changes
@@ -42,17 +47,42 @@ function AppContent() {
     }
   }, [user]);
 
-  const handlePasswordChangeSuccess = () => {
+  // Initialize offline sync when app loads
+  useEffect(() => {
+    if (user) {
+      // Start auto-sync every 30 seconds
+      syncManager.startAutoSync(30000);
+      
+      return () => {
+        syncManager.stopAutoSync();
+      };
+    }
+  }, [user]);
+
+  const handlePasswordChangeSuccess = async () => {
     // Refresh user data to update password_changed flag
-    window.location.reload();
+    try {
+      await checkAuth();
+      setShowPasswordModal(false);
+    } catch (error) {
+      console.error('Error refreshing user data:', error);
+      window.location.reload();
+    }
+  };
+
+  // Make modal non-dismissible - user must change password
+  const handleModalClose = () => {
+    // Do nothing - modal cannot be closed until password is changed
   };
 
   return (
     <>
-      <Header />
+      <OfflineIndicator />
+      {!showPasswordModal && <Header />}
+      {!showPasswordModal && <LicenseStatus />}
       <PasswordChangeModal
         isOpen={showPasswordModal}
-        onClose={() => setShowPasswordModal(false)}
+        onClose={handleModalClose}
         onSuccess={handlePasswordChangeSuccess}
       />
       <div className="container">
@@ -63,6 +93,22 @@ function AppContent() {
             element={
               <ProtectedRoute>
                 <Dashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/tasks/pm" 
+            element={
+              <ProtectedRoute>
+                <Tasks />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/tasks/inspection" 
+            element={
+              <ProtectedRoute>
+                <Inspection />
               </ProtectedRoute>
             } 
           />
@@ -91,14 +137,6 @@ function AppContent() {
             } 
           />
           <Route 
-            path="/assets" 
-            element={
-              <ProtectedRoute requireAdmin={true}>
-                <Assets />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
             path="/checklist-templates" 
             element={
               <ProtectedRoute requireAdmin={true}>
@@ -123,14 +161,6 @@ function AppContent() {
             }
           />
           <Route 
-            path="/spare-requests" 
-            element={
-              <ProtectedRoute>
-                <SpareRequests />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
             path="/users" 
             element={
               <ProtectedRoute requireAdmin={true}>
@@ -151,6 +181,30 @@ function AppContent() {
             element={
               <ProtectedRoute>
                 <Notifications />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/calendar" 
+            element={
+              <ProtectedRoute>
+                <Calendar />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/license" 
+            element={
+              <ProtectedRoute requireAdmin={true}>
+                <LicenseManagement />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/plant" 
+            element={
+              <ProtectedRoute>
+                <Plant />
               </ProtectedRoute>
             } 
           />
@@ -213,6 +267,8 @@ function Header() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout, isAdmin, isSuperAdmin, isTechnician, getUserRoles } = useAuth();
+  const [tasksDropdownOpen, setTasksDropdownOpen] = useState(false);
+  const [tasksDropdownTimeout, setTasksDropdownTimeout] = useState(null);
 
   const handleLogout = async () => {
     await logout();
@@ -227,10 +283,12 @@ function Header() {
   const userRoles = getUserRoles();
   const rolesDisplay = userRoles.length > 0 ? userRoles.join(', ') : (user.role || 'technician');
 
+  const isTasksActive = location.pathname.startsWith('/tasks');
+
   return (
     <div className="header">
       <div className="header-top">
-        <h1>O&M Management System</h1>
+        <h1>SIE Management System</h1>
         <div className="header-user">
           <span className="user-name">{user.full_name || user.username}</span>
           <span className="user-role">({rolesDisplay})</span>
@@ -243,14 +301,94 @@ function Header() {
         <Link to="/" className={location.pathname === '/' ? 'active' : ''}>
           Dashboard
         </Link>
-        <Link to="/tasks" className={location.pathname.startsWith('/tasks') ? 'active' : ''}>
-          Tasks
-        </Link>
-        {!isTechnician() && (
-          <Link to="/assets" className={location.pathname === '/assets' ? 'active' : ''}>
-            Assets
+        <div 
+          className="nav-dropdown"
+          onMouseEnter={() => {
+            if (tasksDropdownTimeout) {
+              clearTimeout(tasksDropdownTimeout);
+              setTasksDropdownTimeout(null);
+            }
+            setTasksDropdownOpen(true);
+          }}
+          onMouseLeave={() => {
+            const timeout = setTimeout(() => {
+              setTasksDropdownOpen(false);
+            }, 150); // Small delay to allow moving to dropdown
+            setTasksDropdownTimeout(timeout);
+          }}
+          style={{ position: 'relative', display: 'inline-block' }}
+        >
+          <Link 
+            to="/tasks/pm" 
+            className={isTasksActive ? 'active' : ''}
+            style={{ display: 'inline-block' }}
+          >
+            Tasks
           </Link>
-        )}
+          {tasksDropdownOpen && (
+            <div 
+              className="nav-dropdown-menu" 
+              onMouseEnter={() => {
+                if (tasksDropdownTimeout) {
+                  clearTimeout(tasksDropdownTimeout);
+                  setTasksDropdownTimeout(null);
+                }
+                setTasksDropdownOpen(true);
+              }}
+              onMouseLeave={() => {
+                const timeout = setTimeout(() => {
+                  setTasksDropdownOpen(false);
+                }, 150);
+                setTasksDropdownTimeout(timeout);
+              }}
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                backgroundColor: '#fff',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                zIndex: 1000,
+                minWidth: '150px',
+                marginTop: '-2px', // Small overlap to prevent gap
+                paddingTop: '6px'
+              }}
+            >
+              <Link 
+                to="/tasks/pm" 
+                className={location.pathname === '/tasks/pm' || (location.pathname === '/tasks' && !location.pathname.includes('/inspection')) ? 'active' : ''}
+                style={{
+                  display: 'block',
+                  padding: '10px 16px',
+                  color: '#333',
+                  textDecoration: 'none',
+                  borderBottom: '1px solid #eee',
+                  transition: 'background-color 0.2s ease'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+              >
+                PM
+              </Link>
+              <Link 
+                to="/tasks/inspection" 
+                className={location.pathname === '/tasks/inspection' ? 'active' : ''}
+                style={{
+                  display: 'block',
+                  padding: '10px 16px',
+                  color: '#333',
+                  textDecoration: 'none',
+                  transition: 'background-color 0.2s ease'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+              >
+                Inspection
+              </Link>
+            </div>
+          )}
+        </div>
         {!isTechnician() && (
           <Link to="/checklist-templates" className={location.pathname === '/checklist-templates' ? 'active' : ''}>
             Templates
@@ -262,20 +400,26 @@ function Header() {
         <Link to="/inventory" className={location.pathname === '/inventory' ? 'active' : ''}>
           Inventory
         </Link>
-        {isAdmin() && (
-          <Link to="/spare-requests" className={location.pathname === '/spare-requests' ? 'active' : ''}>
-            Spare Requests
-          </Link>
-        )}
+        <Link to="/calendar" className={location.pathname === '/calendar' ? 'active' : ''}>
+          Calendar
+        </Link>
+        <Link to="/plant" className={location.pathname === '/plant' ? 'active' : ''}>
+          Plant
+        </Link>
         {isAdmin() && (
           <Link to="/users" className={location.pathname === '/users' ? 'active' : ''}>
             Users
           </Link>
         )}
+        {isAdmin() && (
+          <Link to="/license" className={location.pathname === '/license' ? 'active' : ''}>
+            License
+          </Link>
+        )}
+        <NotificationBadge />
         <Link to="/profile" className={location.pathname === '/profile' ? 'active' : ''}>
           Profile
         </Link>
-        <NotificationBadge />
       </nav>
     </div>
   );

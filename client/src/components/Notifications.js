@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getNotifications, getUnreadNotificationCount, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification } from '../api/api';
+import { getNotifications, getUnreadNotificationCount, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, getTrackerStatusRequests, reviewTrackerStatusRequest } from '../api/api';
+import { useAuth } from '../context/AuthContext';
 import './Notifications.css';
 
 function Notifications() {
+  const { isAdmin, isSuperAdmin } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+  const [reviewingRequest, setReviewingRequest] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [processingRequest, setProcessingRequest] = useState(false);
 
   useEffect(() => {
     loadNotifications();
@@ -78,20 +83,48 @@ function Notifications() {
     }
   };
 
+  const handleReviewRequest = async (requestId, action) => {
+    if (action === 'reject' && !rejectionReason.trim()) {
+      alert('Please provide a reason for rejection');
+      return;
+    }
+
+    setProcessingRequest(true);
+    try {
+      await reviewTrackerStatusRequest(requestId, action, rejectionReason || null);
+      alert(`Request ${action === 'approve' ? 'approved' : 'rejected'} successfully!`);
+      setReviewingRequest(null);
+      setRejectionReason('');
+      loadNotifications();
+      loadUnreadCount();
+    } catch (error) {
+      console.error('Error reviewing request:', error);
+      alert(error.response?.data?.error || 'Failed to review request');
+    } finally {
+      setProcessingRequest(false);
+    }
+  };
+
   const getNotificationIcon = (type) => {
     switch (type) {
       case 'task_assigned':
-        return '📋';
+        return 'TASK';
       case 'task_reminder':
-        return '⏰';
+        return 'REMINDER';
       case 'task_flagged':
-        return '⚠️';
+        return 'FLAGGED';
       case 'early_completion_approved':
-        return '✅';
+        return 'APPROVED';
       case 'early_completion_rejected':
+        return 'REJECTED';
+      case 'tracker_status_request':
+        return '📋';
+      case 'tracker_status_approved':
+        return '✅';
+      case 'tracker_status_rejected':
         return '❌';
       default:
-        return '🔔';
+        return 'INFO';
     }
   };
 
@@ -106,6 +139,12 @@ function Notifications() {
       case 'early_completion_approved':
         return 'notification-approved';
       case 'early_completion_rejected':
+        return 'notification-rejected';
+      case 'tracker_status_request':
+        return 'notification-tracker-request';
+      case 'tracker_status_approved':
+        return 'notification-approved';
+      case 'tracker_status_rejected':
         return 'notification-rejected';
       default:
         return '';
@@ -172,13 +211,68 @@ function Notifications() {
                   </span>
                 </div>
                 <p className="notification-message">{notification.message}</p>
+                
+                {/* Tracker Status Request Actions (Admin Only) */}
+                {notification.type === 'tracker_status_request' && 
+                 (isAdmin() || isSuperAdmin()) && 
+                 notification.metadata?.request_id && (
+                  <div style={{ 
+                    marginTop: '12px', 
+                    padding: '12px', 
+                    background: '#f8f9fa', 
+                    borderRadius: '6px',
+                    border: '1px solid #dee2e6'
+                  }}>
+                    <div style={{ marginBottom: '10px', fontSize: '13px', color: '#666', lineHeight: '1.6' }}>
+                      <div><strong>Trackers:</strong> {notification.metadata.tracker_ids?.join(', ') || 'N/A'}</div>
+                      <div><strong>Task Type:</strong> {notification.metadata.task_type === 'grass_cutting' ? '🌿 Grass Cutting' : '💧 Panel Wash'}</div>
+                      <div><strong>Status:</strong> {notification.metadata.status_type === 'done' ? '✅ Done' : '🔄 Halfway'}</div>
+                      {notification.metadata.message && (
+                        <div style={{ marginTop: '6px', fontStyle: 'italic' }}>
+                          <strong>Note:</strong> {notification.metadata.message}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => handleReviewRequest(notification.metadata.request_id, 'approve')}
+                        className="btn btn-success"
+                        disabled={processingRequest}
+                        style={{ 
+                          padding: '8px 16px', 
+                          fontSize: '13px',
+                          fontWeight: 'bold',
+                          flex: '1',
+                          minWidth: '120px'
+                        }}
+                      >
+                        ✅ Approve
+                      </button>
+                      <button
+                        onClick={() => setReviewingRequest(notification.metadata.request_id)}
+                        className="btn btn-danger"
+                        disabled={processingRequest}
+                        style={{ 
+                          padding: '8px 16px', 
+                          fontSize: '13px',
+                          fontWeight: 'bold',
+                          flex: '1',
+                          minWidth: '120px'
+                        }}
+                      >
+                        ❌ Reject
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
                 {notification.task_id && (
                   <Link 
                     to={`/tasks/${notification.task_id}`}
                     className="notification-link"
                     onClick={() => handleMarkAsRead(notification.id)}
                   >
-                    View Task →
+                    View Task
                   </Link>
                 )}
               </div>
@@ -189,7 +283,7 @@ function Notifications() {
                     onClick={() => handleMarkAsRead(notification.id)}
                     title="Mark as read"
                   >
-                    ✓
+                    Read
                   </button>
                 )}
                 <button
@@ -202,6 +296,82 @@ function Notifications() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Rejection Reason Modal */}
+      {reviewingRequest && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000
+          }}
+          onClick={() => !processingRequest && setReviewingRequest(null)}
+        >
+          <div 
+            style={{
+              background: 'white',
+              borderRadius: '12px',
+              padding: '25px',
+              maxWidth: '500px',
+              width: '90%',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.3)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: '0 0 15px 0', color: '#dc3545' }}>
+              ❌ Reject Tracker Status Request
+            </h2>
+            <p style={{ margin: '0 0 15px 0', color: '#666', fontSize: '14px' }}>
+              Please provide a reason for rejecting this request:
+            </p>
+            <textarea
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              placeholder="Enter rejection reason..."
+              rows="4"
+              style={{
+                width: '100%',
+                padding: '10px',
+                fontSize: '14px',
+                border: '2px solid #ddd',
+                borderRadius: '6px',
+                resize: 'vertical',
+                fontFamily: 'inherit',
+                marginBottom: '15px'
+              }}
+              disabled={processingRequest}
+            />
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  setReviewingRequest(null);
+                  setRejectionReason('');
+                }}
+                className="btn btn-secondary"
+                disabled={processingRequest}
+                style={{ padding: '10px 20px', fontSize: '14px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleReviewRequest(reviewingRequest, 'reject')}
+                className="btn btn-danger"
+                disabled={processingRequest || !rejectionReason.trim()}
+                style={{ padding: '10px 20px', fontSize: '14px', fontWeight: 'bold' }}
+              >
+                {processingRequest ? 'Processing...' : 'Reject Request'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
