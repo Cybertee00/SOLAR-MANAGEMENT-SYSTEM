@@ -98,6 +98,8 @@ The system displays a status indicator at the top of the screen showing:
 
 ### Core Functionality
 - **Dynamic Checklist Engine**: No hard-coded checklist fields - all checklists are defined in the database
+- **Interactive Checklist Structure Editor**: Full in-app editor for modifying checklist sections and items
+- **Template Management**: Upload Excel/Word files, create, edit, and delete templates directly in the system
 - **Location-Based Tasks**: Tasks are created with location information instead of asset-specific assignments
 - **Backend-Driven Validation**: Pass/fail logic is enforced on the server, not in the UI
 - **Automatic CM Generation**: Failed PM tasks automatically generate CM tasks and letters
@@ -133,14 +135,28 @@ The system displays a status indicator at the top of the screen showing:
 - **CM Letter Status Tracking**: Track CM letters from open to resolved status
 
 ### Notifications System
-- **Real-Time Notifications**: In-app notification system for important events
+- **Real-Time Notifications**: In-app notification system with idempotency protection (prevents duplicates)
+- **Auto-Mark as Read**: Notifications automatically marked as read when viewed or interacted with
+- **Category Filtering**: Filter notifications by Tasks, Tracker Status, Early Completion, or Other
+- **Date Grouping**: Notifications grouped by "Today", "Yesterday", or full date
 - **Admin Review Interface**: Admins can review and approve/reject tracker status requests
 - **Overtime Request Notifications**: Automatic notifications for overtime work acknowledgement
 - **Task Assignment Notifications**: Notifications for task assignments and updates
+- **Professional UI**: Clean, professional interface using React Icons library
 
 ### User Management & Security
-- **Role-Based Access Control**: Technician, Supervisor, Admin, and Super Admin roles
+- **Advanced Role-Based Access Control (RBAC)**: Six granular roles with permission-based access:
+  - **System Owner**: Full system control and access to all features
+  - **Operations Administrator**: Day-to-day operations management, template management, user management
+  - **Supervisor**: Task oversight, approval workflows, team management
+  - **Technician**: Task execution, checklist completion, field work
+  - **General Worker**: Basic task execution and viewing
+  - **Inventory Controller**: Inventory management and spares tracking
+- **Granular Permissions**: Access defined by responsibility, not just title
 - **Single-Device-Per-Session Security**: Users can only access from one device at a time
+- **Two-Tier Inactivity Timeout**: 
+  - **Work-Active Timeout** (2-4 hours): Extended timeout when user has active tasks, recent work, or API activity
+  - **Idle Timeout** (45 minutes): Standard security timeout for inactive sessions
 - **Password Management**: Forced password change on first login
 - **User Profile Management**: Complete user profile and account management
 - **License Management**: System-wide license control and validation
@@ -154,11 +170,15 @@ The system displays a status indicator at the top of the screen showing:
 ## Tech Stack
 
 - **Backend**: Node.js + Express
-- **Frontend**: React (PWA)
-- **Database**: PostgreSQL
-- **Session Management**: Redis (optional)
+- **Frontend**: React (PWA) with React Icons
+- **Database**: PostgreSQL (with JSONB for flexible data structures)
+- **Session Management**: Redis (optional) for single-device-per-session
+- **File Processing**: 
+  - Excel: `exceljs` for parsing `.xlsx` and `.xls` files
+  - Word: `mammoth` for parsing `.docx` files
 - **Deployment**: Docker + Docker Compose
 - **Update Service**: Secure authenticated updates (no backdoors)
+- **Security**: Role-based access control with granular permissions
 
 ## Deployment
 
@@ -174,6 +194,7 @@ For deployment instructions, see:
 - **[Quick Deployment Reference](./README_DEPLOYMENT.md)** - Quick start guide
 - **[Deployment Guide](./DEPLOYMENT_GUIDE.md)** - Complete deployment documentation
 - **[Deployment Architecture](./DEPLOYMENT_ARCHITECTURE.md)** - Architecture details
+- **[Infrastructure Cost Analysis](./INFRASTRUCTURE_COST_ANALYSIS.md)** - 90-day deployment cost analysis and platform recommendations
 - **API**: RESTful APIs
 
 ## Prerequisites
@@ -212,11 +233,12 @@ This will install dependencies for the root, server, and client.
 
 This will:
 - Create the database if it doesn't exist
-- Create all required tables
+- Create all required tables including RBAC tables (roles, permissions, role_permissions, user_roles)
+- Run all database migrations
 - Seed initial data including:
-  - Default admin and technician users
-  - Sample Weather Station asset
-  - Weather Station PM checklist template
+  - Default System Owner and Operations Administrator users
+  - 13 pre-configured checklist templates (imported from Excel files)
+  - RBAC roles and permissions
 
 ### 3. Start the Application
 
@@ -264,12 +286,20 @@ ChecksheetsApp/
 
 ### Core Tables
 
-- **users**: System users (admin, technician, supervisor)
+- **users**: System users with role information
+- **roles**: RBAC roles (system_owner, operations_admin, supervisor, technician, general_worker, inventory_controller)
+- **permissions**: System permissions (templates:create, users:read, etc.)
+- **role_permissions**: Mapping of roles to permissions
+- **user_roles**: User role assignments
 - **assets**: Physical assets (weather stations, inverters, etc.)
-- **checklist_templates**: Dynamic checklist definitions
+- **checklist_templates**: Dynamic checklist definitions with JSONB structure
 - **tasks**: PM/CM task instances
 - **checklist_responses**: Submitted checklist data
 - **cm_letters**: Corrective maintenance letters
+- **tracker_status_requests**: Tracker status change requests with approval workflow
+- **notifications**: In-app notifications with idempotency keys
+- **inventory_items**: Spare parts inventory
+- **plant_map_structure**: Plant map layout and tracker configurations
 
 ## Checklist Templates
 
@@ -355,6 +385,27 @@ SPHAiRPlatform implements **single-device-per-session** security to enhance appl
 
 **Note**: This feature requires Redis to be enabled (`REDIS_ENABLED=true`). The system gracefully degrades if Redis is unavailable, allowing multiple sessions (backward compatibility).
 
+### Two-Tier Inactivity Timeout
+
+SPHAiRPlatform implements an intelligent inactivity timeout system:
+
+- **Work-Active Timeout (2-4 hours)**: Extended timeout applies when:
+  - User has active tasks (`in_progress` or `paused` status)
+  - User has unsaved drafts in local storage
+  - Task started within last 2 hours
+  - Recent API activity (within last 10 minutes)
+  
+  This prevents logout during active field work while maintaining security.
+
+- **Idle Timeout (45 minutes)**: Standard security timeout applies when:
+  - User has no active work context
+  - No recent task activity
+  - No recent API activity
+  
+- **Warning Modal**: System displays a 5-minute warning before logout, allowing users to extend their session
+
+This two-tier approach balances security with usability, ensuring field workers aren't interrupted during active maintenance tasks.
+
 ## API Endpoints
 
 ### Authentication
@@ -370,16 +421,25 @@ SPHAiRPlatform implements **single-device-per-session** security to enhance appl
 - `PATCH /api/tasks/:id/complete` - Complete a task (automatically creates overtime request if outside working hours)
 
 ### Overtime Requests
-- `GET /api/overtime-requests` - List all overtime requests (Super Admin only)
-- `PATCH /api/overtime-requests/:id/approve` - Approve/acknowledge an overtime request (Super Admin only)
-- `PATCH /api/overtime-requests/:id/reject` - Reject an overtime request (Super Admin only)
+- `GET /api/overtime-requests` - List all overtime requests (System Owner/Operations Administrator only)
+- `PATCH /api/overtime-requests/:id/approve` - Approve/acknowledge an overtime request
+- `PATCH /api/overtime-requests/:id/reject` - Reject an overtime request
 
 ### Checklist Responses
 - `POST /api/checklist-responses` - Submit checklist response
 - `GET /api/checklist-responses?task_id=:id` - Get responses for a task
 
+### Checklist Templates
+- `GET /api/checklist-templates` - List all checklist templates
+- `GET /api/checklist-templates/:id` - Get template details
+- `POST /api/checklist-templates/upload` - Upload Excel/Word template file
+- `POST /api/checklist-templates` - Create new template
+- `PUT /api/checklist-templates/:id` - Update template (metadata and structure)
+- `DELETE /api/checklist-templates/:id` - Delete template
+
 ### CM Letters
 - `GET /api/cm-letters` - List CM letters
+- `GET /api/cm-letters/:id` - Get CM letter details
 - `PATCH /api/cm-letters/:id/status` - Update CM letter status
 - `GET /api/cm-letters/fault-log/download` - Download fault log report (with date range filtering)
 
@@ -394,12 +454,30 @@ SPHAiRPlatform implements **single-device-per-session** security to enhance appl
 - `GET /api/inventory/items` - Get inventory items
 - `GET /api/inventory/spares-usage` - Get spares usage (with date range filtering)
 - `POST /api/inventory/update` - Update inventory quantities
+- `POST /api/inventory/items` - Create new inventory item
+- `PUT /api/inventory/items/:id` - Update inventory item
 
 ### Notifications
-- `GET /api/notifications` - Get user notifications
+- `GET /api/notifications` - Get user notifications (with category and date filtering)
 - `GET /api/notifications/unread-count` - Get unread notification count
 - `PATCH /api/notifications/:id/read` - Mark notification as read
 - `PATCH /api/notifications/read-all` - Mark all notifications as read
+
+### Users & RBAC
+- `GET /api/users` - List all users (System Owner/Operations Administrator only)
+- `POST /api/users` - Create new user
+- `PUT /api/users/:id` - Update user
+- `DELETE /api/users/:id` - Delete user
+- `GET /api/users/roles` - Get all available roles
+- `GET /api/users/:id/rbac` - Get user's roles and permissions
+- `POST /api/users/:id/roles` - Assign roles to user
+
+### Calendar
+- `GET /api/calendar/events` - Get calendar events
+- `POST /api/calendar/events` - Create calendar event
+- `PUT /api/calendar/events/:id` - Update calendar event
+- `DELETE /api/calendar/events/:id` - Delete calendar event
+- `GET /api/calendar/download` - Download year calendar (Excel format)
 
 See individual route files for complete API documentation.
 
@@ -432,18 +510,46 @@ npm start  # React development server with hot reload
 After running `setup-db`, you'll have:
 
 - **Users**:
-  - admin / admin@solarom.com (admin role, password: tech1)
-  - tech1 / tech1@solarom.com (technician role, password: tech123)
+  - System Owner account (with `system_owner` role) - check setup script for credentials
+  - Operations Administrator account (with `operations_admin` role)
+  - Additional roles and users can be created through the web interface
 
 - **Checklist Templates**:
   - 13 pre-configured templates (see Checklist Templates section above)
   - Templates are automatically imported from `server/templates/excel/`
+  - All templates include complete checklist structures with sections and items
+
+- **RBAC System**:
+  - 6 pre-configured roles with appropriate permissions
+  - Permission system ready for granular access control
 
 ## Template Management
 
-### Updating Templates
+### Web-Based Template Management
 
-To update all checklist templates from Excel files:
+Templates can be managed directly through the web interface (System Owner and Operations Administrator only):
+
+- **Upload Templates**: Upload Excel (`.xlsx`, `.xls`) or Word (`.docx`) files - the system automatically extracts checklist structure
+- **Create Templates**: Manually create templates with custom checklist structures
+- **Edit Templates**: 
+  - Update metadata (name, description, frequency, asset type)
+  - Edit checklist structure directly using the built-in structure editor (add/remove sections and items, reorder, update titles)
+- **Delete Templates**: Remove templates that are no longer needed
+
+### Checklist Structure Editor
+
+The built-in structure editor allows you to:
+- Add/remove sections and items
+- Update section titles and item descriptions
+- Reorder sections and items (drag-and-drop)
+- Edit item properties inline
+- Save changes directly to the database
+
+### Command-Line Template Management
+
+For bulk operations, you can also use command-line scripts:
+
+#### Updating All Templates from Excel Files
 
 ```bash
 cd server
@@ -456,7 +562,7 @@ This script:
 - Updates or inserts templates in the database
 - Maintains proper template code format: `{PREFIX}-PM-{NUMBER}`
 
-### Cleaning Up Old Templates
+#### Cleaning Up Old Templates
 
 To remove templates that are no longer in the Excel folder:
 
@@ -465,14 +571,61 @@ cd server
 node scripts/cleanup-old-templates.js
 ```
 
-## Next Steps
+### Template File Support
 
-- Add authentication and authorization
-- Implement user roles and permissions
-- Add more checklist templates
-- Implement reporting and analytics
-- Add mobile app support (React Native)
-- Implement background jobs for scheduled tasks
+The system supports:
+- **Excel Files**: `.xlsx`, `.xls` - Automatically extracts sections, items, metadata, and frequencies
+- **Word Files**: `.docx` - Extracts text content and attempts to parse into checklist structure
+
+Templates are stored with their complete structure in JSONB format, making them fully dynamic and editable without code changes.
+
+## Role-Based Access Control (RBAC)
+
+SPHAiRPlatform uses a comprehensive RBAC system with six defined roles:
+
+### System Owner
+- Full system control and access to all features
+- Can assign System Owner role to other users
+- Can manage all templates, users, and system settings
+- Access to license management
+
+### Operations Administrator
+- Day-to-day operations management
+- Can create, update, and delete templates
+- Can manage users (except System Owner role assignment)
+- Full access to tasks, inventory, and reporting
+- Cannot access license management
+
+### Supervisor
+- Task oversight and approval workflows
+- Can view and manage team tasks
+- Can approve/reject tracker status requests
+- Access to notifications and calendar
+- Cannot manage templates or users
+
+### Technician
+- Task execution and checklist completion
+- Can start, pause, resume, and complete tasks
+- Can submit checklist responses
+- Access to plant map and notifications
+- Read-only access to most other features
+
+### General Worker
+- Basic task execution
+- Can complete assigned tasks
+- Limited access to system features
+- Cannot view templates page
+
+### Inventory Controller
+- Inventory management and spares tracking
+- Can update inventory quantities
+- Can create and edit inventory items
+- Access to spares usage reports
+- Cannot view templates page
+
+### Permission-Based Access
+
+Access is defined by permissions (e.g., `templates:create`, `templates:update`, `templates:delete`, `users:read`, `users:create`, `plant:approve_status`), not just roles. This allows for granular control and easy extension with additional roles or permissions.
 
 ## License
 
