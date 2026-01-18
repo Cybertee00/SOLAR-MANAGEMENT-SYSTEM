@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getUsers, createUser, updateUser, deactivateUser } from '../api/api';
+import { getUsers, createUser, updateUser, deactivateUser, deleteUser, getRoles } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { getApiBaseUrl } from '../api/api';
 import './UserManagement.css';
 
 function UserManagement() {
   const { isAdmin, isSuperAdmin, user: currentUser } = useAuth();
+  const { hasRole } = usePermissions();
   const [users, setUsers] = useState([]);
+  const [availableRoles, setAvailableRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -25,13 +28,43 @@ function UserManagement() {
     roles: ['technician']
   });
   const editRolesFormRef = useRef(null); // Ref for the edit roles form section
+  const [showRoleDescriptions, setShowRoleDescriptions] = useState(false);
   const usersPerPage = 4;
 
   useEffect(() => {
     if (isAdmin()) {
       loadUsers();
+      loadRoles();
     }
   }, [isAdmin]);
+  
+  const loadRoles = async () => {
+    try {
+      const response = await getRoles();
+      setAvailableRoles(response.data || []);
+    } catch (error) {
+      console.error('Error loading roles:', error);
+      // Fallback to default roles
+      setAvailableRoles([
+        { role_code: 'system_owner', role_name: 'System Owner' },
+        { role_code: 'operations_admin', role_name: 'Operations Administrator' },
+        { role_code: 'supervisor', role_name: 'Supervisor' },
+        { role_code: 'technician', role_name: 'Technician' },
+        { role_code: 'general_worker', role_name: 'General Worker' },
+        { role_code: 'inventory_controller', role_name: 'Inventory Controller' }
+      ]);
+    }
+  };
+  
+  // Format role name for display
+  const formatRoleName = (roleCode) => {
+    const role = availableRoles.find(r => r.role_code === roleCode);
+    if (role) return role.role_name;
+    // Fallback formatting
+    return roleCode.split('_').map(word => 
+      word.charAt(0).toUpperCase() + word.slice(1)
+    ).join(' ');
+  };
 
   // Reset to page 1 if current page is invalid after users list changes
   useEffect(() => {
@@ -218,6 +251,20 @@ function UserManagement() {
     }
   };
 
+  const handleDelete = async (id, username) => {
+    if (!window.confirm(`Are you sure you want to permanently delete user "${username}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deleteUser(id);
+      loadUsers();
+      setError(''); // Clear any previous errors
+    } catch (error) {
+      setError(error.response?.data?.error || 'Failed to delete user');
+    }
+  };
+
 
 
   const handleCancel = () => {
@@ -261,7 +308,7 @@ function UserManagement() {
             setShowForm(true);
           }}
         >
-          + Add New User
+          + Add
         </button>
       </div>
 
@@ -278,23 +325,31 @@ function UserManagement() {
             <div className="form-group">
               <label>Roles * <small>(Select one or more roles)</small></label>
               <div className="roles-checkboxes">
-                {['technician', 'supervisor', 'admin', 'super_admin'].map(role => (
-                  <label key={role} className="role-checkbox">
+                {availableRoles
+                  .filter(role => {
+                    // Only system_owner can see and assign system_owner role
+                    if (role.role_code === 'system_owner') {
+                      return hasRole('system_owner') || isSuperAdmin();
+                    }
+                    return true;
+                  })
+                  .map(role => (
+                  <label key={role.role_code} className="role-checkbox">
                     <input
                       type="checkbox"
-                      checked={roleEditData.roles?.includes(role) || false}
+                      checked={roleEditData.roles?.includes(role.role_code) || false}
                       onChange={(e) => {
                         const currentRoles = roleEditData.roles || [];
                         if (e.target.checked) {
                           setRoleEditData(prev => ({
                             ...prev,
-                            roles: [...currentRoles, role]
+                            roles: [...currentRoles, role.role_code]
                           }));
                         } else {
                           if (currentRoles.length > 1) {
                             setRoleEditData(prev => ({
                               ...prev,
-                              roles: currentRoles.filter(r => r !== role)
+                              roles: currentRoles.filter(r => r !== role.role_code)
                             }));
                           } else {
                             setError('At least one role must be selected');
@@ -302,7 +357,7 @@ function UserManagement() {
                         }
                       }}
                     />
-                    <span>{role.charAt(0).toUpperCase() + role.slice(1).replace('_', ' ')}</span>
+                    <span>{role.role_name || formatRoleName(role.role_code)}</span>
                   </label>
                 ))}
               </div>
@@ -312,7 +367,7 @@ function UserManagement() {
             </div>
             <div className="form-actions">
               <button type="submit" className="btn btn-primary">
-                Save Roles
+                Save
               </button>
               <button 
                 type="button" 
@@ -332,7 +387,7 @@ function UserManagement() {
 
       {showForm && (
         <div className="card form-card">
-          <h2>{editingUser ? 'Edit User' : 'Create New User'}</h2>
+          <h2>{editingUser ? 'Edit User' : 'New User'}</h2>
           <form onSubmit={handleSubmit}>
             <div className="form-row">
               <div className="form-group">
@@ -372,35 +427,43 @@ function UserManagement() {
 
             <div className="form-row">
               <div className="form-group">
-                <label>Roles * {isSuperAdmin() && <small>(Multiple roles allowed)</small>}</label>
-                {isSuperAdmin() ? (
-                  // Multi-select checkboxes for super admin
+                <label>Roles * {(hasRole('system_owner') || isSuperAdmin()) && <small>(Multiple roles allowed)</small>}</label>
+                {(hasRole('system_owner') || isSuperAdmin()) ? (
+                  // Multi-select checkboxes for system owner
                   <div className="roles-checkboxes">
-                    {['technician', 'supervisor', 'admin', 'super_admin'].map(role => (
-                      <label key={role} className="role-checkbox">
+                    {availableRoles
+                      .filter(role => {
+                        // Only system_owner can see and assign system_owner role
+                        if (role.role_code === 'system_owner') {
+                          return hasRole('system_owner') || isSuperAdmin();
+                        }
+                        return true;
+                      })
+                      .map(role => (
+                      <label key={role.role_code} className="role-checkbox">
                         <input
                           type="checkbox"
-                          checked={formData.roles?.includes(role) || false}
+                          checked={formData.roles?.includes(role.role_code) || false}
                           onChange={(e) => {
                             const currentRoles = formData.roles || [];
                             if (e.target.checked) {
                               setFormData(prev => ({
                                 ...prev,
-                                roles: [...currentRoles, role],
-                                role: currentRoles.length === 0 ? role : prev.role // Set primary role if first
+                                roles: [...currentRoles, role.role_code],
+                                role: currentRoles.length === 0 ? role.role_code : prev.role // Set primary role if first
                               }));
                             } else {
                               setFormData(prev => ({
                                 ...prev,
-                                roles: currentRoles.filter(r => r !== role),
-                                role: currentRoles[0] === role && currentRoles.length > 1 
+                                roles: currentRoles.filter(r => r !== role.role_code),
+                                role: currentRoles[0] === role.role_code && currentRoles.length > 1 
                                   ? currentRoles[1] 
-                                  : (currentRoles[0] === role ? 'technician' : prev.role)
+                                  : (currentRoles[0] === role.role_code ? 'technician' : prev.role)
                               }));
                             }
                           }}
                         />
-                        <span>{role.charAt(0).toUpperCase() + role.slice(1).replace('_', ' ')}</span>
+                        <span>{role.role_name || formatRoleName(role.role_code)}</span>
                       </label>
                     ))}
                     {(!formData.roles || formData.roles.length === 0) && (
@@ -408,7 +471,7 @@ function UserManagement() {
                     )}
                   </div>
                 ) : (
-                  // Single select for admin
+                  // Single select for admin (excludes system_owner)
                   <select
                     name="role"
                     value={formData.role}
@@ -421,9 +484,13 @@ function UserManagement() {
                     }}
                     required
                   >
-                    <option value="technician">Technician</option>
-                    <option value="supervisor">Supervisor</option>
-                    <option value="admin">Administrator</option>
+                    {availableRoles.filter(r => 
+                      ['technician', 'supervisor', 'operations_admin', 'general_worker', 'inventory_controller'].includes(r.role_code)
+                    ).map(role => (
+                      <option key={role.role_code} value={role.role_code}>
+                        {role.role_name || formatRoleName(role.role_code)}
+                      </option>
+                    ))}
                   </select>
                 )}
               </div>
@@ -450,7 +517,7 @@ function UserManagement() {
 
             <div className="form-actions">
               <button type="submit" className="btn btn-primary">
-                {editingUser ? 'Update User' : 'Create User'}
+                {editingUser ? 'Save' : 'Create'}
               </button>
               <button type="button" className="btn btn-secondary" onClick={handleCancel}>
                 Cancel
@@ -464,7 +531,111 @@ function UserManagement() {
         <div className="loading">Loading users...</div>
       ) : (
         <div className="card">
-          <h2>All Users ({users.length})</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+            <h2 style={{ margin: 0 }}>All Users ({users.length})</h2>
+            <button
+              onClick={() => setShowRoleDescriptions(!showRoleDescriptions)}
+              className="btn btn-sm btn-secondary"
+              style={{
+                padding: '4px 10px',
+                fontSize: '11px',
+                minHeight: '28px',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {showRoleDescriptions ? '▼' : '▶'} Role Descriptions
+            </button>
+          </div>
+          
+          {showRoleDescriptions && (
+            <div className="role-descriptions" style={{
+              marginBottom: '20px',
+              padding: '12px',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '6px',
+              border: '1px solid #e0e0e0',
+              fontSize: '12px',
+              lineHeight: '1.6'
+            }}>
+              <div style={{ marginBottom: '12px', fontWeight: '600', color: '#333', fontSize: '13px' }}>
+                Role Access Permissions:
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
+                {(hasRole('system_owner') || isSuperAdmin()) && (
+                  <div>
+                    <strong style={{ color: '#9c27b0' }}>System Owner</strong>
+                    <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px', color: '#555' }}>
+                      <li>Full system access and control</li>
+                      <li>Can manage all users and roles</li>
+                      <li>Can access all pages and features</li>
+                      <li>Can upload, create, edit, delete checklist templates</li>
+                      <li>Can assign system_owner role</li>
+                      <li>Bypasses all permission checks</li>
+                    </ul>
+                  </div>
+                )}
+                <div>
+                  <strong style={{ color: '#dc3545' }}>Operations Administrator</strong>
+                  <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px', color: '#555' }}>
+                    <li>Manages daily operations</li>
+                    <li>Can create, edit, delete tasks</li>
+                    <li>Can upload, create, edit, delete checklist templates</li>
+                    <li>Can manage inventory</li>
+                    <li>Can create and manage users</li>
+                    <li>Can approve tracker status requests</li>
+                  </ul>
+                </div>
+                <div>
+                  <strong style={{ color: '#ffc107' }}>Supervisor</strong>
+                  <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px', color: '#555' }}>
+                    <li>Oversees work execution</li>
+                    <li>Can create and assign tasks</li>
+                    <li>Can approve task completions</li>
+                    <li>Can approve spare requests</li>
+                    <li>Can approve tracker status requests</li>
+                    <li>Cannot access Templates page</li>
+                  </ul>
+                </div>
+                <div>
+                  <strong style={{ color: '#17a2b8' }}>Technician</strong>
+                  <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px', color: '#555' }}>
+                    <li>Performs maintenance work</li>
+                    <li>Can view assigned tasks</li>
+                    <li>Can start, pause, resume, complete tasks</li>
+                    <li>Can fill out checklists</li>
+                    <li>Can create and update CM letters</li>
+                    <li>Can update tracker status (requires approval)</li>
+                    <li>Cannot access Templates page</li>
+                    <li>Cannot create tasks or approve anything</li>
+                  </ul>
+                </div>
+                <div>
+                  <strong style={{ color: '#6c757d' }}>General Worker</strong>
+                  <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px', color: '#555' }}>
+                    <li>Basic access for assigned work</li>
+                    <li>Can view assigned tasks only</li>
+                    <li>Can complete assigned tasks</li>
+                    <li>Cannot access Templates page</li>
+                    <li>Can view calendar</li>
+                    <li>Cannot create tasks or access inventory</li>
+                  </ul>
+                </div>
+                <div>
+                  <strong style={{ color: '#28a745' }}>Inventory Controller</strong>
+                  <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px', color: '#555' }}>
+                    <li>Manages inventory and spares</li>
+                    <li>Can create, edit, delete inventory items</li>
+                    <li>Can approve spare part requests</li>
+                    <li>Can view tasks (read-only)</li>
+                    <li>Can view and download reports</li>
+                    <li>Cannot access Templates page</li>
+                    <li>Cannot create or manage tasks</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+          
           <div className="table-responsive">
             {(() => {
               const totalPages = Math.ceil(users.length / usersPerPage);
@@ -527,19 +698,27 @@ function UserManagement() {
                               <td data-label="Full Name">{user.full_name}</td>
                               <td data-label="Email">{user.email}</td>
                               <td data-label="Role">
-                                {user.roles && Array.isArray(user.roles) && user.roles.length > 1 ? (
-                                  <div className="roles-badges">
-                                    {user.roles.map((role, idx) => (
-                                      <span key={idx} className={`badge badge-${role}`}>
-                                        {role}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <span className={`badge badge-${user.role || user.roles?.[0] || 'technician'}`}>
-                                    {user.role || user.roles?.[0] || 'technician'}
-                                  </span>
-                                )}
+                                {(() => {
+                                  // Show creator (current user) as system_owner if they don't have explicit roles
+                                  const displayRoles = user.id === currentUser?.id && 
+                                    (!user.roles || user.roles.length === 0 || !user.roles.includes('system_owner'))
+                                    ? ['system_owner']
+                                    : (user.roles && Array.isArray(user.roles) ? user.roles : [user.role || 'technician']);
+                                  
+                                  return displayRoles.length > 1 ? (
+                                    <div className="roles-badges">
+                                      {displayRoles.map((role, idx) => (
+                                        <span key={idx} className={`badge badge-${role}`} title={formatRoleName(role)}>
+                                          {formatRoleName(role)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className={`badge badge-${displayRoles[0]}`} title={formatRoleName(displayRoles[0])}>
+                                      {formatRoleName(displayRoles[0])}
+                                    </span>
+                                  );
+                                })()}
                               </td>
                               <td data-label="Status">
                                 <span className={`badge ${user.is_active ? 'badge-success' : 'badge-danger'}`}>
@@ -559,7 +738,7 @@ function UserManagement() {
                                 }
                               </td>
                               <td data-label="Action">
-                                {isSuperAdmin() && user.id !== currentUser?.id && (
+                                {(hasRole('system_owner') || isSuperAdmin()) && user.id !== currentUser?.id && (
                                   <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
                                     <button
                                       className="btn btn-sm btn-primary"
@@ -571,21 +750,53 @@ function UserManagement() {
                                         whiteSpace: 'nowrap',
                                         flex: '0 0 auto'
                                       }}
+                                      title="Edit Roles"
                                     >
                                       Edit
                                     </button>
                                     <button
-                                      className={`btn btn-sm ${user.is_active ? 'btn-warning' : 'btn-success'}`}
                                       onClick={() => handleDeactivate(user.id, user.username, user.is_active)}
                                       style={{ 
-                                        padding: '4px 12px',
-                                        fontSize: '12px',
+                                        padding: '4px 8px',
+                                        fontSize: '18px',
                                         minHeight: '32px',
-                                        whiteSpace: 'nowrap',
-                                        flex: '0 0 auto'
+                                        minWidth: '32px',
+                                        border: 'none',
+                                        background: 'transparent',
+                                        cursor: 'pointer',
+                                        color: user.is_active ? '#ff9800' : '#4caf50',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'opacity 0.2s'
                                       }}
+                                      onMouseEnter={(e) => e.target.style.opacity = '0.7'}
+                                      onMouseLeave={(e) => e.target.style.opacity = '1'}
+                                      title={user.is_active ? 'Deactivate User' : 'Activate User'}
                                     >
-                                      {user.is_active ? 'Deactivate' : 'Reactivate'}
+                                      {user.is_active ? '⏸' : '▶'}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDelete(user.id, user.username)}
+                                      style={{ 
+                                        padding: '4px 8px',
+                                        fontSize: '18px',
+                                        minHeight: '32px',
+                                        minWidth: '32px',
+                                        border: 'none',
+                                        background: 'transparent',
+                                        cursor: 'pointer',
+                                        color: '#f44336',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'opacity 0.2s'
+                                      }}
+                                      onMouseEnter={(e) => e.target.style.opacity = '0.7'}
+                                      onMouseLeave={(e) => e.target.style.opacity = '1'}
+                                      title="Delete User"
+                                    >
+                                      🗑
                                     </button>
                                   </div>
                                 )}

@@ -248,8 +248,9 @@ async function parseExcelTemplate(filePath, assetPrefix, fileName) {
   const headerRow = findHeaderRow(worksheet);
   const startRow = headerRow ? headerRow + 1 : 1;
   
-  // Find columns that might contain item descriptions
-  let itemCol = null;
+  // Find columns that might contain item numbers, descriptions, and observations
+  let numberCol = null; // Column with numbers like "1", "1.1", "2.1"
+  let descriptionCol = null; // Column with item descriptions
   let passFailCol = null;
   let remarksCol = null;
   
@@ -257,8 +258,11 @@ async function parseExcelTemplate(filePath, assetPrefix, fileName) {
     const headerRowData = worksheet.getRow(headerRow);
     headerRowData.eachCell({ includeEmpty: false }, (cell, colNumber) => {
       const text = getCellText(cell.value).toLowerCase();
-      if (text.includes('item') || text.includes('description') || text.includes('check') || text.includes('inspection')) {
-        itemCol = colNumber;
+      if (text.includes('#') || text.includes('no') || text.includes('number') || text.includes('sn')) {
+        numberCol = colNumber;
+      }
+      if (text.includes('item') || text.includes('description') || text.includes('check') || text.includes('inspection') || text.includes('activity')) {
+        descriptionCol = colNumber;
       }
       if (text.includes('pass') || text.includes('fail') || text.includes('result')) {
         passFailCol = colNumber;
@@ -269,57 +273,223 @@ async function parseExcelTemplate(filePath, assetPrefix, fileName) {
     });
   }
   
-  // If we couldn't detect columns, use common patterns
-  if (!itemCol) itemCol = 2; // Usually column B
-  if (!passFailCol) passFailCol = 3; // Usually column C
+  // Default column positions (most templates use B for numbers, C for descriptions)
+  if (!numberCol) numberCol = 2; // Column B
+  if (!descriptionCol) descriptionCol = 3; // Column C
+  if (!passFailCol) passFailCol = 10; // Column J (usually Pass/Fail)
+  if (!remarksCol) {
+    // Try to find observations column by checking header row and a few rows after
+    for (let testRow = headerRow || 11; testRow <= (headerRow || 11) + 2; testRow++) {
+      for (let c = 11; c <= 15; c++) {
+        const testCell = worksheet.getRow(testRow).getCell(c);
+        const testText = getCellText(testCell.value).toLowerCase();
+        if (testText.includes('observation') || testText.includes('remark')) {
+          remarksCol = c;
+          break;
+        }
+      }
+      if (remarksCol) break;
+    }
+    if (!remarksCol) remarksCol = 12; // Column L (common for observations)
+  }
   
-  // Parse rows
+  // Parse rows - look for numbered sections and items
+  // Scan a few rows after header to detect column structure
+  let detectedNumberCol = numberCol;
+  let detectedDescCol = descriptionCol;
+  
+  // Try to detect actual column structure by scanning first few data rows
+  for (let testRow = startRow; testRow < startRow + 10; testRow++) {
+    const testRowData = worksheet.getRow(testRow);
+    // Check columns B, C, D, E for number patterns
+    for (let col = 2; col <= 5; col++) {
+      const cell = testRowData.getCell(col);
+      const text = getCellText(cell.value);
+      const trimmed = text.trim();
+      // Check for section numbers (1, 2, 3) or item numbers (1.1, 1.2, 2.1)
+      if (/^\d+$/.test(trimmed) || /^\d+\.\d+/.test(trimmed)) {
+        detectedNumberCol = col;
+        // Description is usually next column, but check a few columns ahead
+        for (let descCol = col + 1; descCol <= col + 3; descCol++) {
+          const descCell = testRowData.getCell(descCol);
+          const descText = getCellText(descCell.value);
+          if (descText && descText.length > 5 && !/^\d+/.test(descText.trim())) {
+            detectedDescCol = descCol;
+            break;
+          }
+        }
+        if (detectedDescCol === descriptionCol) {
+          detectedDescCol = col + 1; // Default to next column
+        }
+        break;
+      }
+    }
+    if (detectedNumberCol !== numberCol) break;
+  }
+  
+  numberCol = detectedNumberCol;
+  descriptionCol = detectedDescCol;
+  
   let itemIndex = 0;
-  for (let r = startRow; r <= worksheet.rowCount; r++) {
+  let lastItemNumber = null;
+  let seenSequentialItems = false; // Track if we've seen sequential numbered items
+  
+  // First pass: Look ahead to determine if we're using sequential numbering (1, 2, 3) or decimal (1.1, 1.2)
+  let usesDecimalNumbering = false;
+  for (let r = startRow; r < Math.min(startRow + 20, worksheet.rowCount); r++) {
     const row = worksheet.getRow(r);
-    const itemCell = row.getCell(itemCol);
-    const itemText = getCellText(itemCell.value);
+    const numberCell = row.getCell(numberCol);
+    const numberText = getCellText(numberCell.value).trim();
+    if (/^\d+\.\d+/.test(numberText)) {
+      usesDecimalNumbering = true;
+      break;
+    }
+  }
+  
+  // Parse all rows up to 200 (or worksheet end)
+  for (let r = startRow; r <= Math.min(worksheet.rowCount, 200); r++) {
+    const row = worksheet.getRow(r);
+    const numberCell = row.getCell(numberCol);
+    const descriptionCell = row.getCell(descriptionCol);
+    const numberText = getCellText(numberCell.value);
+    const descriptionText = getCellText(descriptionCell.value);
     
-    // Skip empty rows
-    if (!itemText) continue;
+    // Skip completely empty rows
+    if (!numberText && !descriptionText) continue;
     
-    // Check if this is a section header (usually bold, all caps, or longer text)
-    const isSectionHeader = itemText.length > 30 || 
-                           itemText === itemText.toUpperCase() ||
-                           (itemCell.font && itemCell.font.bold);
+    // Trim and clean the number text
+    const trimmedNumber = numberText.trim();
+    const trimmedDesc = descriptionText.trim();
     
-    if (isSectionHeader && itemText.length > 10) {
-      // Start a new section
-      if (currentSection && currentSection.items.length > 0) {
-        sections.push(currentSection);
+    // Check if this is a section number (just a number like "1", "2", "3" without decimal)
+    const isSectionNumber = /^\d+$/.test(trimmedNumber);
+    
+    // Check if this is an item number (has decimal like "1.1", "1.2", "2.1", "2.1.1", etc.)
+    const isItemNumber = /^\d+\.\d+/.test(trimmedNumber);
+    
+    // Check if this is a sequential item number (1, 2, 3, etc.)
+    const isSequentialNumber = /^\d+$/.test(trimmedNumber);
+    
+    // Track sequential items
+    if (isSequentialNumber && !usesDecimalNumbering) {
+      const num = parseInt(trimmedNumber, 10);
+      if (lastItemNumber !== null && num === lastItemNumber + 1) {
+        seenSequentialItems = true;
+      }
+      lastItemNumber = num;
+    }
+    
+    // Handle section headers without numbers (text-only sections)
+    if (!trimmedNumber && trimmedDesc && trimmedDesc.length > 5) {
+      const isLikelySection = trimmedDesc.length > 15 || 
+                              /inspection|monitoring|check|test|cleaning/i.test(trimmedDesc) ||
+                              trimmedDesc === trimmedDesc.toUpperCase() ||
+                              (descriptionCell.font && descriptionCell.font.bold);
+      
+      if (isLikelySection) {
+        if (currentSection && currentSection.items.length > 0) {
+          sections.push(currentSection);
+        }
+        currentSection = {
+          id: `section_${sections.length + 1}`,
+          title: trimmedDesc,
+          items: []
+        };
+        itemIndex = 0;
+        lastItemNumber = null;
+        seenSequentialItems = false;
+      }
+    }
+    // Handle decimal item numbering (1.1, 1.2, etc.)
+    else if (isItemNumber && trimmedDesc && trimmedDesc.length > 3) {
+      if (!currentSection) {
+        currentSection = {
+          id: 'section_1',
+          title: 'Inspection Items',
+          items: []
+        };
       }
       
-      currentSection = {
-        id: `section_${sections.length + 1}`,
-        title: itemText,
-        items: []
-      };
-    } else if (currentSection && itemText.length > 0) {
-      // Add item to current section
       itemIndex++;
       const item = {
         id: `item_${sections.length + 1}_${itemIndex}`,
         type: 'pass_fail',
-        label: itemText,
+        label: trimmedDesc,
         required: true,
         has_observations: !!remarksCol
       };
       
-      // Check if there's a remarks/observations column
-      if (remarksCol) {
-        const remarksCell = row.getCell(remarksCol);
-        const remarksText = getCellText(remarksCell.value);
-        if (remarksText) {
-          item.placeholder = remarksText;
+      currentSection.items.push(item);
+    }
+    // Handle section headers with numbers (only if using decimal numbering)
+    else if (isSectionNumber && trimmedDesc && trimmedDesc.length > 5 && usesDecimalNumbering) {
+      // Check if this looks like a section title
+      const isLikelySection = trimmedDesc.length > 30 || 
+                              /inspection|monitoring|check|test/i.test(trimmedDesc) ||
+                              trimmedDesc === trimmedDesc.toUpperCase();
+      
+      if (isLikelySection) {
+        if (currentSection && currentSection.items.length > 0) {
+          sections.push(currentSection);
         }
+        currentSection = {
+          id: `section_${sections.length + 1}`,
+          title: trimmedDesc,
+          items: []
+        };
+        itemIndex = 0;
+      }
+    }
+    // Handle sequential item numbering (1, 2, 3, etc.) when NOT using decimal numbering
+    else if (isSequentialNumber && trimmedDesc && trimmedDesc.length > 3 && !usesDecimalNumbering) {
+      if (!currentSection) {
+        currentSection = {
+          id: 'section_1',
+          title: 'Inspection Items',
+          items: []
+        };
       }
       
+      itemIndex++;
+      const item = {
+        id: `item_${sections.length + 1}_${itemIndex}`,
+        type: 'pass_fail',
+        label: trimmedDesc,
+        required: true,
+        has_observations: !!remarksCol
+      };
+      
       currentSection.items.push(item);
+    }
+    // Handle section headers without numbers (text-only, already handled above but keep for fallback)
+    else if (trimmedDesc && trimmedDesc.length > 10 && !isItemNumber && !isSectionNumber) {
+      const isLikelySection = trimmedDesc.length > 30 || 
+                              trimmedDesc === trimmedDesc.toUpperCase() ||
+                              /inspection|monitoring|check|test/i.test(trimmedDesc) ||
+                              (descriptionCell.font && descriptionCell.font.bold);
+      
+      if (isLikelySection && (!currentSection || currentSection.items.length === 0)) {
+        if (currentSection && currentSection.items.length > 0) {
+          sections.push(currentSection);
+        }
+        currentSection = {
+          id: `section_${sections.length + 1}`,
+          title: trimmedDesc,
+          items: []
+        };
+        itemIndex = 0;
+      } else if (currentSection && trimmedDesc.length > 0) {
+        // Add as item if we have a section
+        itemIndex++;
+        const item = {
+          id: `item_${sections.length + 1}_${itemIndex}`,
+          type: 'pass_fail',
+          label: trimmedDesc,
+          required: true,
+          has_observations: !!remarksCol
+        };
+        currentSection.items.push(item);
+      }
     }
   }
   

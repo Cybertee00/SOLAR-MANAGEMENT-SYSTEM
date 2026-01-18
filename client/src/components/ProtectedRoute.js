@@ -1,43 +1,91 @@
+/**
+ * ProtectedRoute component for role-based and permission-based routing
+ * Controls access to routes based on user permissions and roles
+ */
+
 import React from 'react';
 import { Navigate } from 'react-router-dom';
+import { usePermissions } from '../hooks/usePermissions';
 import { useAuth } from '../context/AuthContext';
 
-function ProtectedRoute({ children, requireAdmin = false }) {
-  const { isAuthenticated, isAdmin, user, loading } = useAuth();
-
+/**
+ * ProtectedRoute component
+ * @param {object} props
+ * @param {React.Component} props.children - Component to render if access is granted
+ * @param {boolean} props.requireAdmin - If true, requires admin/super_admin/operations_admin/system_owner role
+ * @param {string|string[]} props.requirePermission - Permission code(s) required to access
+ * @param {string|string[]} props.requireRole - Role code(s) required to access
+ * @param {boolean} props.requireAll - If true, requires ALL permissions/roles; if false, requires ANY
+ * @param {string} props.redirectTo - Path to redirect to if access is denied (default: '/')
+ */
+export default function ProtectedRoute({
+  children,
+  requireAdmin,
+  requirePermission,
+  requireRole,
+  requireAll = false,
+  redirectTo = '/'
+}) {
+  const { hasPermission, hasAnyPermission, hasAllPermissions, hasRole, hasAnyRole, roles } = usePermissions();
+  const { isAdmin, loading, user, isAuthenticated } = useAuth();
+  
+  // Wait for authentication to finish loading
   if (loading) {
-    return <div className="loading">Loading...</div>;
+    return (
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        minHeight: '200px' 
+      }}>
+        <div className="loading">Loading...</div>
+      </div>
+    );
   }
-
+  
+  // If not authenticated after loading, redirect to login
   if (!isAuthenticated()) {
     return <Navigate to="/login" replace />;
   }
-
-  // Block access if password hasn't been changed
-  if (user && user.password_changed === false) {
-    return (
-      <div className="container">
-        <div className="alert alert-warning" style={{ margin: '20px', padding: '20px' }}>
-          <h3>Password Change Required</h3>
-          <p>You must change your default password before accessing the application.</p>
-          <p>Please wait for the password change dialog to appear.</p>
-        </div>
-      </div>
-    );
+  
+  let hasAccess = true;
+  
+  // System owner has access to everything
+  if (roles && roles.includes('system_owner')) {
+    return <>{children}</>;
   }
-
-  if (requireAdmin && !isAdmin()) {
-    return (
-      <div className="container">
-        <div className="alert alert-error">
-          Access denied. Admin privileges required.
-        </div>
-      </div>
-    );
+  
+  // Check requireAdmin prop (backward compatibility)
+  if (requireAdmin) {
+    hasAccess = isAdmin();
+    if (!hasAccess) {
+      return <Navigate to={redirectTo} replace />;
+    }
   }
-
-  return children;
+  
+  // Check permissions
+  if (hasAccess && requirePermission) {
+    if (Array.isArray(requirePermission)) {
+      hasAccess = requireAll 
+        ? hasAllPermissions(...requirePermission)
+        : hasAnyPermission(...requirePermission);
+    } else {
+      hasAccess = hasPermission(requirePermission);
+    }
+  }
+  
+  // Check roles (if permissions check passed or no permission requirement)
+  if (hasAccess && requireRole) {
+    if (Array.isArray(requireRole)) {
+      hasAccess = hasAnyRole(...requireRole);
+    } else {
+      hasAccess = hasRole(requireRole);
+    }
+  }
+  
+  if (!hasAccess) {
+    return <Navigate to={redirectTo} replace />;
+  }
+  
+  return <>{children}</>;
 }
-
-export default ProtectedRoute;
-

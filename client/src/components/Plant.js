@@ -305,26 +305,40 @@ function Plant() {
       return;
     }
 
+    // Prevent duplicate submissions
+    if (submittingRequest) {
+      console.log('[PLANT] Submission already in progress, ignoring duplicate request');
+      return;
+    }
+
     setSubmittingRequest(true);
     try {
-      await submitTrackerStatusRequest({
+      const response = await submitTrackerStatusRequest({
         tracker_ids: Array.from(selectedTrackers),
         task_type: viewMode,
         status_type: statusRequestForm.status_type,
         message: statusRequestForm.message || null
       });
       
+      console.log('[PLANT] Status request submitted successfully:', response.data);
       alert(`Status request submitted successfully! ${selectedTrackers.size} tracker(s) marked as ${statusRequestForm.status_type === 'done' ? 'done' : 'halfway'}. Waiting for admin approval.`);
       setShowStatusRequestModal(false);
       setSelectedTrackers(new Set());
       setStatusRequestForm({ status_type: 'done', message: '' });
     } catch (error) {
-      console.error('Error submitting status request:', error);
-      alert(error.response?.data?.error || 'Failed to submit status request');
+      console.error('[PLANT] Error submitting status request:', error);
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to submit status request';
+      
+      // Handle duplicate request error gracefully
+      if (error.response?.status === 409) {
+        alert(`Request already submitted. ${error.response?.data?.message || 'Please wait a moment before submitting again.'}`);
+      } else {
+        alert(errorMessage);
+      }
     } finally {
       setSubmittingRequest(false);
     }
-  }, [selectedTrackers, viewMode, statusRequestForm]);
+  }, [selectedTrackers, viewMode, statusRequestForm, submittingRequest]);
 
 
   // Calculate bounding box (memoized)
@@ -637,7 +651,7 @@ function Plant() {
           >
             <div style={{ marginBottom: '20px' }}>
               <h2 style={{ margin: '0 0 10px 0', color: '#1976d2' }}>
-                📝 Mark Tracker Status
+                Update Status
               </h2>
               <p style={{ margin: '0', color: '#666', fontSize: '14px' }}>
                 You've selected <strong>{selectedTrackers.size}</strong> tracker(s) for <strong>{viewMode === 'grass_cutting' ? 'Grass Cutting' : 'Panel Wash'}</strong>
@@ -719,7 +733,7 @@ function Plant() {
                 disabled={submittingRequest}
                 style={{ padding: '10px 20px', fontSize: '14px', fontWeight: 'bold' }}
               >
-                {submittingRequest ? 'Submitting...' : '📤 Submit Request'}
+                {submittingRequest ? 'Submitting...' : 'Submit'}
               </button>
             </div>
           </div>

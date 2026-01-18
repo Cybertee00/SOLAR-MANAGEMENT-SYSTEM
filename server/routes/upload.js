@@ -3,6 +3,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
+const { validateUploadedFile } = require('../utils/fileValidator');
+const logger = require('../utils/logger');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -50,6 +52,29 @@ module.exports = (pool) => {
         return res.status(400).json({ error: 'No image file provided' });
       }
 
+      // Validate file using magic number detection (prevents MIME type spoofing)
+      try {
+        await validateUploadedFile(req.file);
+        logger.debug('File type validation passed', { filename: req.file.originalname });
+      } catch (validationError) {
+        // Delete uploaded file if validation fails
+        if (req.file && req.file.path) {
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (unlinkError) {
+            logger.error('Error deleting invalid file', { error: unlinkError.message });
+          }
+        }
+        logger.warn('File upload rejected - validation failed', {
+          filename: req.file.originalname,
+          error: validationError.message
+        });
+        return res.status(400).json({ 
+          error: 'Invalid file type',
+          message: validationError.message
+        });
+      }
+
       const { task_id, checklist_response_id, item_id, section_id, comment } = req.body;
 
       if (!task_id || !item_id || !section_id) {
@@ -83,13 +108,13 @@ module.exports = (pool) => {
         message: 'Image uploaded successfully'
       });
     } catch (error) {
-      console.error('Error uploading image:', error);
+      logger.error('Error uploading image', { error: error.message, stack: error.stack });
       // Delete uploaded file if database insert fails
       if (req.file && req.file.path) {
         try {
           fs.unlinkSync(req.file.path);
         } catch (unlinkError) {
-          console.error('Error deleting uploaded file:', unlinkError);
+          logger.error('Error deleting uploaded file', { error: unlinkError.message });
         }
       }
       res.status(500).json({ error: 'Failed to upload image', details: error.message });
@@ -105,7 +130,7 @@ module.exports = (pool) => {
       );
       res.json(result.rows);
     } catch (error) {
-      console.error('Error fetching images:', error);
+      logger.error('Error fetching images', { error: error.message, taskId: req.params.taskId });
       res.status(500).json({ error: 'Failed to fetch images' });
     }
   });
@@ -125,7 +150,7 @@ module.exports = (pool) => {
     
     // Security: Check if file exists and is within uploads directory
     if (!fs.existsSync(filePath)) {
-      console.error('Image not found:', { filename, filePath, params: req.params });
+      logger.warn('Image not found', { filename, filePath, params: req.params });
       return res.status(404).json({ error: 'Image not found', filename: filename });
     }
 

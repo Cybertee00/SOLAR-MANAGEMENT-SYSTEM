@@ -1,4 +1,18 @@
 require('dotenv').config();
+
+// Load logger and environment utilities FIRST (before other modules that might use console.log)
+const logger = require('./utils/logger');
+const { isProduction } = require('./utils/env');
+const { validateEnvironment } = require('./utils/envValidator');
+
+// Validate environment variables at startup
+try {
+  validateEnvironment();
+} catch (error) {
+  logger.error('Environment validation failed:', error.message);
+  process.exit(1);
+}
+
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -20,13 +34,13 @@ const path = require('path');
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log('Created uploads directory');
+  logger.info('Created uploads directory');
 }
 // Create profiles subdirectory
 const profilesDir = path.join(__dirname, 'uploads', 'profiles');
 if (!fs.existsSync(profilesDir)) {
   fs.mkdirSync(profilesDir, { recursive: true });
-  console.log('Created uploads/profiles directory');
+  logger.info('Created uploads/profiles directory');
 }
 
 // ============================================================================
@@ -45,13 +59,13 @@ app.get('/uploads/profiles/:filename', (req, res) => {
   const resolvedPath = path.resolve(filePath);
   const profilesDir = path.resolve(__dirname, 'uploads', 'profiles');
   if (!resolvedPath.startsWith(profilesDir)) {
-    console.error('[UPLOADS] Directory traversal blocked');
+    logger.warn('[UPLOADS] Directory traversal blocked', { filename, ip: req.ip });
     return res.status(403).send('Forbidden');
   }
   
   // Check if file exists
   if (!fs.existsSync(filePath)) {
-    console.error('[UPLOADS] Profile image not found:', filePath);
+    logger.warn('[UPLOADS] Profile image not found', { filePath, ip: req.ip });
     return res.status(404).send('Not found');
   }
   
@@ -69,7 +83,7 @@ app.get('/uploads/profiles/:filename', (req, res) => {
   // Read and serve file with proper headers
   fs.readFile(filePath, (err, data) => {
     if (err) {
-      console.error('[UPLOADS] Error reading profile image:', err);
+      logger.error('[UPLOADS] Error reading profile image', { filePath, error: err.message });
       return res.status(500).send('Error reading file');
     }
     
@@ -89,19 +103,19 @@ app.get('/uploads/:filename', (req, res) => {
   const filename = req.params.filename;
   const filePath = path.join(__dirname, 'uploads', filename);
   
-  console.log(`[UPLOADS] Request for: ${filename}`);
+  logger.debug(`[UPLOADS] Request for: ${filename}`);
   
   // Security check: prevent directory traversal
   const resolvedPath = path.resolve(filePath);
   const uploadsDir = path.resolve(__dirname, 'uploads');
   if (!resolvedPath.startsWith(uploadsDir)) {
-    console.error('[UPLOADS] Directory traversal blocked');
+    logger.warn('[UPLOADS] Directory traversal blocked', { filename, ip: req.ip });
     return res.status(403).send('Forbidden');
   }
   
   // Check if file exists
   if (!fs.existsSync(filePath)) {
-    console.error('[UPLOADS] File not found:', filePath);
+    logger.warn('[UPLOADS] File not found', { filePath, ip: req.ip });
     return res.status(404).send('Not found');
   }
   
@@ -119,7 +133,7 @@ app.get('/uploads/:filename', (req, res) => {
   // Read and send file with explicit headers
   fs.readFile(filePath, (err, data) => {
     if (err) {
-      console.error('[UPLOADS] Read error:', err);
+      logger.error('[UPLOADS] Read error', { filePath, error: err.message });
       return res.status(500).send('Error');
     }
     
@@ -132,9 +146,7 @@ app.get('/uploads/:filename', (req, res) => {
       'Cache-Control': 'public, max-age=31536000'
     });
     
-    console.log(`[UPLOADS] ✅ Headers set via writeHead`);
-    console.log(`[UPLOADS] ✅ Sending ${data.length} bytes`);
-    console.log(`========================================\n`);
+    logger.debug(`[UPLOADS] Sending file`, { filename, size: data.length });
     res.end(data, 'binary');
   });
 });
@@ -146,7 +158,7 @@ app.get('/uploads/:filename', (req, res) => {
 // Only enable if explicitly set (not for localhost)
 if (process.env.TRUST_PROXY === 'true' || process.env.DEV_TUNNELS === 'true') {
   app.set('trust proxy', 1);
-  console.log('Trust proxy enabled (for Dev Tunnels/port forwarding)');
+  logger.info('Trust proxy enabled (for Dev Tunnels/port forwarding)');
 }
 
 // Explicit OPTIONS handler for CORS preflight - MUST be first
@@ -265,12 +277,9 @@ app.use('/api/webhooks/:id/:action', validateUUIDParams);
 app.use('/api/users/:id/:action', validateUUIDParams);
 
 // Session configuration with secure defaults
-// CRITICAL: SESSION_SECRET must be set in production environment
-const sessionSecret = process.env.SESSION_SECRET;
-if (!sessionSecret && process.env.NODE_ENV === 'production') {
-  console.error('ERROR: SESSION_SECRET environment variable is required in production!');
-  process.exit(1);
-}
+// SESSION_SECRET validation is now handled by envValidator.js
+// It will generate a random secret for development or fail in production
+const sessionSecret = process.env.SESSION_SECRET || 'CHANGE-THIS-SECRET-IN-PRODUCTION-USE-RANDOM-STRING';
 
 // Determine cookie settings based on environment
 // For localhost (HTTP), we need secure: false and sameSite: 'lax'
@@ -289,40 +298,49 @@ const isHTTPS = process.env.HTTPS_ENABLED === 'true' ||
 const cookieSecure = isHTTPS && (isDevTunnels || process.env.NODE_ENV === 'production');
 const cookieSameSite = isDevTunnels && cookieSecure ? 'none' : 'lax';
 
-// Request logging middleware - Log all API requests for debugging
+// Request logging middleware - Log all API requests
 app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
   const method = req.method;
   const path = req.path;
   const query = Object.keys(req.query).length > 0 ? `?${new URLSearchParams(req.query).toString()}` : '';
   const user = req.session?.username || req.session?.userId || 'anonymous';
   const role = req.session?.role || 'none';
   
-  console.log(`[${timestamp}] ${method} ${path}${query} - User: ${user} (${role})`);
+  // Log request
+  const logData = {
+    method,
+    path: path + query,
+    user,
+    role,
+    ip: req.ip || req.connection.remoteAddress
+  };
   
-  // Log request body for POST/PUT/PATCH (but limit size to avoid spam)
-  // Skip logging for multipart/form-data (file uploads) - handled by multer, not body parser
+  logger.debug(`${method} ${path}${query}`, logData);
+  
+  // Log request body for POST/PUT/PATCH (debug only, skip multipart)
   const contentType = req.headers['content-type'] || '';
-  if (['POST', 'PUT', 'PATCH'].includes(method) && !contentType.includes('multipart/form-data') && req.body && Object.keys(req.body).length > 0) {
+  if (!isProduction() && ['POST', 'PUT', 'PATCH'].includes(method) && 
+      !contentType.includes('multipart/form-data') && req.body && Object.keys(req.body).length > 0) {
     const bodyStr = JSON.stringify(req.body);
     if (bodyStr.length < 500) {
-      console.log(`[${timestamp}] Request body:`, req.body);
-    } else {
-      console.log(`[${timestamp}] Request body: (too large, ${bodyStr.length} chars)`);
+      logger.debug('Request body', { body: req.body });
     }
-  }
-  // Log Content-Type for multipart requests to help debug file uploads
-  if (contentType.includes('multipart/form-data')) {
-    console.log(`[${timestamp}] Multipart/form-data request detected, Content-Type: ${contentType.substring(0, 50)}...`);
   }
   
   // Log response when it finishes
   const originalSend = res.send;
   res.send = function(data) {
-    console.log(`[${timestamp}] ${method} ${path}${query} - Response: ${res.statusCode}`);
+    const statusLevel = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'debug';
+    logger[statusLevel](`${method} ${path}${query} - Response: ${res.statusCode}`, logData);
     originalSend.apply(res, arguments);
   };
   
+  next();
+});
+
+// Attach database pool to request object for use in middleware
+app.use((req, res, next) => {
+  req.db = pool;
   next();
 });
 
@@ -343,7 +361,7 @@ app.use(session({
   // Important: session is saved automatically when response is sent if session was modified
 }));
 
-console.log(`Session cookie configuration: secure=${cookieSecure}, sameSite=${cookieSameSite}, isHTTPS=${isHTTPS}, isDevTunnels=${isDevTunnels}`);
+logger.info(`Session cookie configuration: secure=${cookieSecure}, sameSite=${cookieSameSite}, isHTTPS=${isHTTPS}, isDevTunnels=${isDevTunnels}`);
 
 // Uploads directory and static file serving moved to the top (before security headers)
 // fs and path are already declared at the top of the file
@@ -373,18 +391,33 @@ app.use('/uploads', (req, res, next) => {
   next();
 }, express.static(path.join(__dirname, 'uploads')));
 
-// Rate limiting removed - system will be used frequently
-// If needed, can be re-enabled via environment variables or by uncommenting below
-// app.use(speedLimiter);
-// app.use('/api', standardLimiter);
+// Rate limiting - Production-ready limits
+// Can be disabled via environment variable: DISABLE_RATE_LIMITING=true
+const { standardLimiter, authLimiter, sensitiveOperationLimiter } = require('./middleware/rateLimiter');
 
-// Database connection
+if (process.env.DISABLE_RATE_LIMITING !== 'true') {
+  // Apply standard rate limiting to all API routes
+  app.use('/api', standardLimiter);
+  logger.info('Rate limiting enabled', {
+    standardLimit: process.env.RATE_LIMIT_MAX || '100 requests per 15 minutes',
+    authLimit: process.env.AUTH_RATE_LIMIT_MAX || '5 requests per 15 minutes'
+  });
+} else {
+  logger.warn('Rate limiting is DISABLED. This should only be used in development!');
+}
+
+// Database connection with connection pooling
+const { getEnvInt } = require('./utils/env');
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
+  port: parseInt(process.env.DB_PORT || '5432', 10),
   database: process.env.DB_NAME || 'solar_om_db',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
+  max: getEnvInt('DB_MAX_CONNECTIONS', 20), // Maximum number of clients in the pool
+  min: getEnvInt('DB_MIN_CONNECTIONS', 2), // Minimum number of clients in the pool
+  idleTimeoutMillis: getEnvInt('DB_IDLE_TIMEOUT', 30000), // Close idle clients after 30 seconds
+  connectionTimeoutMillis: getEnvInt('DB_CONNECTION_TIMEOUT', 2000), // Return an error after 2 seconds if connection could not be established
 });
 
 // Optional API token auth (Bearer tok_...)
@@ -394,10 +427,19 @@ app.use(apiTokenAuth(pool));
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
   if (err) {
-    console.error('Database connection error:', err);
+    logger.error('Database connection error', { error: err.message });
   } else {
-    console.log('Database connected successfully');
+    logger.info('Database connected successfully', { 
+      host: process.env.DB_HOST, 
+      database: process.env.DB_NAME,
+      maxConnections: pool.totalCount 
+    });
   }
+});
+
+// Log pool errors
+pool.on('error', (err) => {
+  logger.error('Unexpected database pool error', { error: err.message, stack: err.stack });
 });
 
 // Test CORS endpoint (for debugging)
@@ -450,9 +492,11 @@ const openapiSpec = swaggerJSDoc({
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
 // Authentication routes (no auth required)
-// Rate limiting removed for frequent use - can be re-enabled if needed
-// app.use('/api/auth/login', authLimiter);
-// app.use('/api/auth/change-password', sensitiveOperationLimiter);
+// Apply strict rate limiting to auth endpoints
+if (process.env.DISABLE_RATE_LIMITING !== 'true') {
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth/change-password', sensitiveOperationLimiter);
+}
 app.use('/api/auth', authRoutes(pool));
 
 // License validation middleware (applied to all protected routes except license endpoints)
@@ -497,10 +541,9 @@ app.use('/api/v1/license', licenseRoutes(pool));
 const reportsDir = path.join(__dirname, 'reports');
 if (!fs.existsSync(reportsDir)) {
   fs.mkdirSync(reportsDir, { recursive: true });
-  console.log('Created reports directory:', reportsDir);
-  console.log('All reports (Word/Excel) will be saved to:', path.resolve(reportsDir));
+  logger.info('Created reports directory', { path: reportsDir, resolvedPath: path.resolve(reportsDir) });
 } else {
-  console.log('Reports directory exists:', path.resolve(reportsDir));
+  logger.debug('Reports directory exists', { path: path.resolve(reportsDir) });
 }
 
 // Create templates directory structure if it doesn't exist
@@ -511,19 +554,127 @@ const excelTemplatesDir = path.join(templatesDir, 'excel');
 [wordTemplatesDir, excelTemplatesDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
-    console.log('Created templates directory:', dir);
+    logger.info('Created templates directory', { path: dir });
   }
 });
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+// Health check endpoint
+app.get('/api/health', async (req, res) => {
+  const health = {
+    status: 'ok',
     message: 'SPHAiRPlatform API is running',
     timestamp: new Date().toISOString(),
-    session: req.session ? 'active' : 'none'
-  });
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    database: 'unknown',
+    redis: 'unknown',
+    memory: {
+      used: Math.round((process.memoryUsage().heapUsed / 1024 / 1024) * 100) / 100,
+      total: Math.round((process.memoryUsage().heapTotal / 1024 / 1024) * 100) / 100,
+      unit: 'MB'
+    }
+  };
+
+  // Check database connectivity
+  try {
+    await pool.query('SELECT NOW()');
+    health.database = 'connected';
+  } catch (error) {
+    health.database = 'disconnected';
+    health.status = 'degraded';
+    health.message = 'Database connection failed';
+  }
+
+  // Check Redis connectivity
+  try {
+    const { isRedisAvailable } = require('./utils/redis');
+    health.redis = isRedisAvailable() ? 'connected' : 'disabled';
+  } catch (error) {
+    health.redis = 'error';
+  }
+
+  const statusCode = health.status === 'ok' ? 200 : 503;
+  res.status(statusCode).json(health);
 });
+
+// Detailed health check endpoint (for monitoring)
+app.get('/api/health/detailed', async (req, res) => {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    uptimeFormatted: formatUptime(process.uptime()),
+    environment: process.env.NODE_ENV || 'development',
+    version: process.env.npm_package_version || '1.0.0',
+    nodeVersion: process.version,
+    database: {
+      status: 'unknown',
+      host: process.env.DB_HOST || 'localhost',
+      name: process.env.DB_NAME || 'solar_om_db',
+      pool: {
+        total: pool.totalCount,
+        idle: pool.idleCount,
+        waiting: pool.waitingCount
+      }
+    },
+    redis: {
+      status: 'unknown',
+      enabled: process.env.REDIS_ENABLED === 'true'
+    },
+    memory: {
+      heapUsed: Math.round((process.memoryUsage().heapUsed / 1024 / 1024) * 100) / 100,
+      heapTotal: Math.round((process.memoryUsage().heapTotal / 1024 / 1024) * 100) / 100,
+      external: Math.round((process.memoryUsage().external / 1024 / 1024) * 100) / 100,
+      rss: Math.round((process.memoryUsage().rss / 1024 / 1024) * 100) / 100,
+      unit: 'MB'
+    },
+    cpu: {
+      usage: process.cpuUsage(),
+      uptime: process.uptime()
+    }
+  };
+
+  // Check database connectivity
+  try {
+    const startTime = Date.now();
+    await pool.query('SELECT NOW(), version()');
+    const responseTime = Date.now() - startTime;
+    health.database.status = 'connected';
+    health.database.responseTime = `${responseTime}ms`;
+  } catch (error) {
+    health.database.status = 'disconnected';
+    health.database.error = error.message;
+    health.status = 'degraded';
+  }
+
+  // Check Redis connectivity
+  try {
+    const { isRedisAvailable } = require('./utils/redis');
+    health.redis.status = isRedisAvailable() ? 'connected' : 'disabled';
+  } catch (error) {
+    health.redis.status = 'error';
+    health.redis.error = error.message;
+  }
+
+  const statusCode = health.status === 'ok' ? 200 : 503;
+  res.status(statusCode).json(health);
+});
+
+// Helper function to format uptime
+function formatUptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+  
+  return parts.join(' ');
+}
 
 // Test auth endpoint
 app.get('/api/auth/test', (req, res) => {
@@ -540,7 +691,7 @@ setInterval(async () => {
   try {
     await scheduleReminders(pool);
   } catch (error) {
-    console.error('Error scheduling reminders:', error);
+    logger.error('Error scheduling reminders', { error: error.message, stack: error.stack });
   }
 }, 24 * 60 * 60 * 1000); // Run every 24 hours
 
@@ -549,26 +700,60 @@ setTimeout(async () => {
   try {
     await scheduleReminders(pool);
   } catch (error) {
-    console.error('Error running initial reminder check:', error);
+    logger.error('Error running initial reminder check', { error: error.message, stack: error.stack });
   }
 }, 5000); // Run 5 seconds after server start
 
 // Initialize Redis and start server
+// In production, Redis is required and initRedis will exit if it fails
 initRedis().then(() => {
+  const { isRedisAvailable } = require('./utils/redis');
+  const redisStatus = isRedisAvailable() ? 'enabled' : 'disabled';
+  
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Access from network: http://YOUR_IP:${PORT}/api`);
-    console.log('Reminder notification scheduler started');
+    logger.info(`Server started successfully`, { 
+      port: PORT, 
+      environment: process.env.NODE_ENV || 'development',
+      redis: redisStatus
+    });
+    logger.info(`Server running on port ${PORT}`);
+    logger.info('Reminder notification scheduler started');
+    
+    if (isProduction() && !isRedisAvailable()) {
+      logger.error('CRITICAL: Redis is required in production but is not available.');
+      logger.error('Server started but will exit. Please configure Redis before deploying to production.');
+      process.exit(1);
+    }
   });
 }).catch((error) => {
-  console.error('Failed to initialize Redis:', error);
-  // Start server anyway (will use memory store for sessions)
+  if (isProduction()) {
+    logger.error('CRITICAL: Failed to initialize Redis in production', { error: error.message });
+    logger.error('Redis is required in production. Server will not start.');
+    process.exit(1);
+  }
+  
+  logger.warn('Failed to initialize Redis', { error: error.message });
+  logger.warn('Server will use memory store for sessions (development only - NOT for production)');
+  // Start server anyway in development (will use memory store for sessions)
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT} (without Redis)`);
-    console.log(`Access from network: http://YOUR_IP:${PORT}/api`);
-    console.log('Reminder notification scheduler started');
+    logger.info(`Server started successfully`, { 
+      port: PORT, 
+      environment: process.env.NODE_ENV || 'development',
+      redis: 'disabled'
+    });
+    logger.warn(`Server running on port ${PORT} (without Redis - development only)`);
+    logger.info('Reminder notification scheduler started');
   });
 });
+
+// Global error handler (must be last middleware)
+const { globalErrorHandler, notFoundHandler } = require('./utils/errors');
+
+// Handle 404 errors (route not found)
+app.use(notFoundHandler);
+
+// Global error handler (catch all errors)
+app.use(globalErrorHandler);
 
 module.exports = app;
 

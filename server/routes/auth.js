@@ -4,6 +4,7 @@ const { Pool } = require('pg');
 const { validateLogin, validateChangePassword } = require('../middleware/inputValidation');
 const { generateToken } = require('../utils/jwt');
 const { storeToken, storeUserSession, getUserSession, deleteUserSession, deleteToken } = require('../utils/redis');
+const logger = require('../utils/logger');
 const deleteRedisToken = deleteToken; // Alias for clarity
 
 module.exports = (pool) => {
@@ -20,10 +21,10 @@ module.exports = (pool) => {
       // Normalize username/email input so "admin " works the same as "admin".
       if (typeof username === 'string') username = username.trim();
 
-      console.log('Login attempt:', { username, hasPassword: !!password });
+      logger.debug('Login attempt', { username, hasPassword: !!password });
 
       if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are required' });
+        throw new BadRequestError('Username and password are required');
       }
 
       // Find user by username
@@ -46,7 +47,7 @@ module.exports = (pool) => {
       } catch (error) {
         // If roles column doesn't exist, use fallback query
         if (error.code === '42703' || error.message.includes('roles')) {
-          console.log('roles column not found, using fallback query');
+          logger.debug('roles column not found, using fallback query');
           userResult = await pool.query(
             `SELECT id, username, email, full_name, 
                     role, profile_image, password_hash, is_active 
@@ -61,22 +62,19 @@ module.exports = (pool) => {
         }
       }
 
-      console.log('User query result:', { found: userResult.rows.length > 0, username: username });
+      logger.debug('User query result', { found: userResult.rows.length > 0, username: username });
 
       if (userResult.rows.length === 0) {
-        console.log('User not found for username:', username);
-        if (!res.headersSent) {
-          return res.status(401).json({ error: 'Invalid username or password' });
-        }
-        return;
+        logger.warn('User not found for login attempt', { username });
+        throw new UnauthorizedError('Invalid username or password');
       }
 
       const user = userResult.rows[0];
-      console.log('User found:', { id: user.id, username: user.username, role: user.role, is_active: user.is_active, has_password: !!user.password_hash });
+      logger.debug('User found', { id: user.id, username: user.username, role: user.role, is_active: user.is_active, has_password: !!user.password_hash });
 
       // Check if user is active
       if (!user.is_active) {
-        console.log('User account is deactivated');
+        logger.warn('Login attempt for deactivated account', { username, userId: user.id });
         
         // Get admin email for the error message
         let adminEmail = 'the administrator';
@@ -122,7 +120,7 @@ module.exports = (pool) => {
             adminEmail = adminResult.rows[0].email;
           }
         } catch (err) {
-          console.error('Error fetching admin email:', err);
+          logger.error('Error fetching admin email', { error: err.message });
           // Use default message if query fails
         }
         
@@ -138,7 +136,7 @@ module.exports = (pool) => {
 
       // Check if user has a password set
       if (!user.password_hash) {
-        console.log('User has no password set');
+        logger.warn('Login attempt for user with no password set', { username, userId: user.id });
         if (!res.headersSent) {
           return res.status(401).json({ 
             error: 'Account not set up. Please contact administrator to set your password.' 
@@ -148,12 +146,12 @@ module.exports = (pool) => {
       }
 
       // Verify password
-      console.log('Comparing password...');
+      logger.debug('Comparing password');
       const passwordMatch = await bcrypt.compare(password, user.password_hash);
-      console.log('Password match result:', passwordMatch);
+      logger.debug('Password match result', { match: passwordMatch });
 
       if (!passwordMatch) {
-        console.log('Password mismatch for user:', username);
+        logger.warn('Password mismatch for login attempt', { username });
         if (!res.headersSent) {
           return res.status(401).json({ error: 'Invalid username or password' });
         }
@@ -198,7 +196,7 @@ module.exports = (pool) => {
             try {
               userRoles = JSON.parse(user.roles);
             } catch (e) {
-              console.log('Failed to parse roles JSON, using role field:', e.message);
+              logger.warn('Failed to parse roles JSON, using role field', { error: e.message });
               userRoles = [user.role || 'technician']; // Fallback
             }
           }
@@ -208,19 +206,38 @@ module.exports = (pool) => {
           userRoles = ['technician']; // Default
         }
       } catch (error) {
-        console.error('Error parsing roles:', error);
+        logger.error('Error parsing roles', { error: error.message });
         // Fallback to role field
         userRoles = [user.role || 'technician'];
       }
 
+      // Load RBAC permissions and roles from database
+      let userPermissions = [];
+      let rbacRoles = [];
+      
+      try {
+        const { loadUserPermissions, loadUserRoles } = require('../middleware/rbac');
+        userPermissions = await loadUserPermissions(user.id, pool);
+        rbacRoles = await loadUserRoles(user.id, pool);
+        
+        // If RBAC roles exist, use them; otherwise use legacy roles
+        if (rbacRoles.length > 0) {
+          userRoles = rbacRoles;
+        }
+      } catch (rbacError) {
+        logger.warn('RBAC tables may not exist yet, using legacy roles', { error: rbacError.message });
+        // Continue with legacy roles
+      }
+      
       // Set session (store both for backward compatibility)
       req.session.userId = user.id;
       req.session.username = user.username;
       req.session.roles = userRoles; // Array of roles (new)
       req.session.role = userRoles[0] || user.role || 'technician'; // Primary role (backward compatibility)
       req.session.fullName = user.full_name;
+      req.session.permissions = userPermissions; // RBAC permissions
 
-      console.log('Session set:', { 
+      logger.debug('Session set', { 
         userId: req.session.userId, 
         username: req.session.username, 
         roles: req.session.roles,
@@ -232,14 +249,14 @@ module.exports = (pool) => {
       // This is important for session persistence
       req.session.save(async (err) => {
         if (err) {
-          console.error('Error saving session:', err);
+          logger.error('Error saving session', { error: err.message });
           if (!res.headersSent) {
             return res.status(500).json({ error: 'Failed to save session' });
           }
           return;
         }
 
-        console.log('Session saved successfully');
+        logger.debug('Session saved successfully');
 
         // Single-Device-Per-Session: Check for existing active session
         const existingToken = await getUserSession(user.id);
@@ -257,7 +274,8 @@ module.exports = (pool) => {
           username: user.username,
           full_name: user.full_name,
           roles: userRoles,
-          role: userRoles[0] || user.role
+          role: userRoles[0] || user.role,
+          permissions: userPermissions
         });
 
         // Store JWT token in Redis (if available)
@@ -266,7 +284,8 @@ module.exports = (pool) => {
           username: user.username,
           roles: userRoles,
           role: userRoles[0] || user.role,
-          fullName: user.full_name
+          fullName: user.full_name,
+          permissions: userPermissions
         }, 86400); // 24 hours
 
         // Store active session for user (single-device-per-session)
@@ -286,6 +305,7 @@ module.exports = (pool) => {
             profile_image: user.profile_image || null,
             role: userRoles[0] || user.role, // Primary role for backward compatibility
             roles: userRoles, // Array of all roles
+            permissions: userPermissions, // RBAC permissions
             password_changed: passwordChanged // Flag to indicate if password needs to be changed
           },
           requires_password_change: !passwordChanged // Flag for frontend to show password change modal
@@ -295,10 +315,11 @@ module.exports = (pool) => {
         }
       });
     } catch (error) {
-      console.error('Login error:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      console.error('Error stack:', error.stack);
+      logger.error('Login error', { 
+        error: error.message, 
+        code: error.code, 
+        stack: error.stack 
+      });
       
       // Only send response if headers haven't been sent
       if (!res.headersSent) {
@@ -448,12 +469,31 @@ module.exports = (pool) => {
         userRoles = ['technician'];
       }
 
+      // Load RBAC permissions and roles
+      let userPermissions = [];
+      let rbacRoles = [];
+      
+      try {
+        const { loadUserPermissions, loadUserRoles } = require('../middleware/rbac');
+        userPermissions = await loadUserPermissions(req.session.userId, pool);
+        rbacRoles = await loadUserRoles(req.session.userId, pool);
+        
+        // If RBAC roles exist, use them; otherwise use legacy roles
+        if (rbacRoles.length > 0) {
+          userRoles = rbacRoles;
+        }
+      } catch (rbacError) {
+        logger.warn('RBAC tables may not exist yet, using legacy roles', { error: rbacError.message });
+        // Continue with legacy roles
+      }
+
       // Get password_changed status
       const passwordChanged = user.password_changed !== false; // Default to true if null (backward compatibility)
 
-      // Update session with fresh roles
+      // Update session with fresh roles and permissions
       req.session.roles = userRoles;
       req.session.role = userRoles[0] || user.role || 'technician';
+      req.session.permissions = userPermissions;
 
       if (!res.headersSent) {
         res.json({
@@ -465,6 +505,7 @@ module.exports = (pool) => {
             profile_image: user.profile_image || null,
             role: userRoles[0] || user.role, // Primary role for backward compatibility
             roles: userRoles, // Array of all roles
+            permissions: userPermissions, // RBAC permissions
             last_login: user.last_login,
             password_changed: passwordChanged
           }

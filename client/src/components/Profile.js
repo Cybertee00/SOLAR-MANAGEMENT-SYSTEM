@@ -343,12 +343,24 @@ function Profile() {
 
   const getRoleBadgeClass = (role) => {
     switch (role) {
+      // Legacy roles
       case 'super_admin':
         return 'badge-super-admin';
       case 'admin':
         return 'badge-admin';
       case 'technician':
         return 'badge-technician';
+      // RBAC roles
+      case 'system_owner':
+        return 'badge-super-admin'; // Use same styling as super_admin
+      case 'operations_admin':
+        return 'badge-admin'; // Use same styling as admin
+      case 'supervisor':
+        return 'badge-supervisor';
+      case 'general_worker':
+        return 'badge-worker';
+      case 'inventory_controller':
+        return 'badge-inventory';
       default:
         return 'badge-default';
     }
@@ -356,14 +368,29 @@ function Profile() {
 
   const getRoleDisplayName = (role) => {
     switch (role) {
+      // Legacy roles (for backward compatibility)
       case 'super_admin':
         return 'Super Admin';
       case 'admin':
         return 'Admin';
       case 'technician':
         return 'Technician';
+      // RBAC roles
+      case 'system_owner':
+        return 'System Owner';
+      case 'operations_admin':
+        return 'Operations Administrator';
+      case 'supervisor':
+        return 'Supervisor';
+      case 'general_worker':
+        return 'General Worker';
+      case 'inventory_controller':
+        return 'Inventory Controller';
       default:
-        return role;
+        // Fallback: format role code (e.g., "some_role" -> "Some Role")
+        return role.split('_').map(word => 
+          word.charAt(0).toUpperCase() + word.slice(1)
+        ).join(' ');
     }
   };
 

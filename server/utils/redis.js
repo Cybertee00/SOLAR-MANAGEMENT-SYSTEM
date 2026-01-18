@@ -1,3 +1,6 @@
+const logger = require('./logger');
+const { isProduction } = require('./env');
+
 let redis = null;
 let redisClient = null;
 let isRedisEnabled = false;
@@ -6,8 +9,13 @@ let isRedisEnabled = false;
 try {
   redis = require('redis');
 } catch (error) {
-  console.log('[REDIS] Redis module not installed. Install with: npm install redis');
-  console.log('[REDIS] System will continue without Redis support.');
+  logger.warn('[REDIS] Redis module not installed. Install with: npm install redis');
+  if (isProduction()) {
+    logger.error('[REDIS] CRITICAL: Redis is required in production but module is not installed.');
+    logger.error('[REDIS] Please install Redis: npm install redis');
+    process.exit(1);
+  }
+  logger.warn('[REDIS] System will continue without Redis support (development mode only).');
 }
 
 /**
@@ -17,13 +25,23 @@ try {
 async function initRedis() {
   // Check if redis module is available
   if (!redis) {
-    console.log('[REDIS] Redis module not available. Install with: npm install redis');
+    if (isProduction()) {
+      logger.error('[REDIS] CRITICAL: Redis module is required in production but not available.');
+      logger.error('[REDIS] Please install Redis: npm install redis');
+      process.exit(1);
+    }
+    logger.warn('[REDIS] Redis module not available. Install with: npm install redis');
     return null;
   }
 
   // Check if Redis is enabled via environment variable
   if (process.env.REDIS_ENABLED !== 'true') {
-    console.log('[REDIS] Redis is disabled. Set REDIS_ENABLED=true to enable.');
+    if (isProduction()) {
+      logger.error('[REDIS] CRITICAL: Redis is required in production but REDIS_ENABLED is not set to "true".');
+      logger.error('[REDIS] Please set REDIS_ENABLED=true in your environment variables.');
+      process.exit(1);
+    }
+    logger.warn('[REDIS] Redis is disabled. Set REDIS_ENABLED=true to enable.');
     return null;
   }
 
@@ -44,31 +62,44 @@ async function initRedis() {
     });
 
     redisClient.on('error', (err) => {
-      console.error('[REDIS] Error:', err);
+      logger.error('[REDIS] Error', { error: err.message });
       isRedisEnabled = false;
+      if (isProduction()) {
+        logger.error('[REDIS] CRITICAL: Redis connection error in production. Server will continue but sessions may be lost.');
+      }
     });
 
     redisClient.on('connect', () => {
-      console.log('[REDIS] Connected to Redis');
+      logger.info('[REDIS] Connected to Redis');
       isRedisEnabled = true;
     });
 
     redisClient.on('ready', () => {
-      console.log('[REDIS] Redis client ready');
+      logger.info('[REDIS] Redis client ready');
       isRedisEnabled = true;
     });
 
     redisClient.on('end', () => {
-      console.log('[REDIS] Connection ended');
+      logger.warn('[REDIS] Connection ended');
       isRedisEnabled = false;
+      if (isProduction()) {
+        logger.error('[REDIS] CRITICAL: Redis connection ended in production. Sessions may be lost.');
+      }
     });
 
     await redisClient.connect();
     isRedisEnabled = true;
+    logger.info('[REDIS] Successfully initialized and connected');
     return redisClient;
   } catch (error) {
-    console.error('[REDIS] Failed to connect to Redis:', error.message);
-    console.log('[REDIS] Continuing without Redis. Sessions will use memory store.');
+    logger.error('[REDIS] Failed to connect to Redis', { error: error.message, stack: error.stack });
+    if (isProduction()) {
+      logger.error('[REDIS] CRITICAL: Redis is required in production but connection failed.');
+      logger.error('[REDIS] Please ensure Redis is running and REDIS_URL is correct.');
+      logger.error('[REDIS] Server will exit to prevent using insecure memory store.');
+      process.exit(1);
+    }
+    logger.warn('[REDIS] Continuing without Redis. Sessions will use memory store (development only).');
     isRedisEnabled = false;
     return null;
   }
@@ -106,7 +137,7 @@ async function storeToken(token, userData, ttlSeconds = 86400) {
     const key = `jwt:${token}`;
     await redisClient.setEx(key, ttlSeconds, JSON.stringify(userData));
   } catch (error) {
-    console.error('[REDIS] Error storing token:', error);
+    logger.error('[REDIS] Error storing token', { error: error.message });
   }
 }
 
@@ -125,7 +156,7 @@ async function getTokenData(token) {
     const data = await redisClient.get(key);
     return data ? JSON.parse(data) : null;
   } catch (error) {
-    console.error('[REDIS] Error getting token data:', error);
+    logger.error('[REDIS] Error getting token data', { error: error.message });
     return null;
   }
 }
@@ -144,7 +175,7 @@ async function deleteToken(token) {
     const key = `jwt:${token}`;
     await redisClient.del(key);
   } catch (error) {
-    console.error('[REDIS] Error deleting token:', error);
+    logger.error('[REDIS] Error deleting token', { error: error.message });
   }
 }
 
@@ -164,9 +195,9 @@ async function storeUserSession(userId, token, ttlSeconds = 86400) {
     const userSessionKey = `user:session:${userId}`;
     // Store the active token for this user
     await redisClient.setEx(userSessionKey, ttlSeconds, token);
-    console.log(`[REDIS] Stored active session for user ${userId}`);
+    logger.debug(`[REDIS] Stored active session for user ${userId}`);
   } catch (error) {
-    console.error('[REDIS] Error storing user session:', error);
+    logger.error('[REDIS] Error storing user session', { error: error.message, userId });
   }
 }
 
@@ -185,7 +216,7 @@ async function getUserSession(userId) {
     const token = await redisClient.get(userSessionKey);
     return token;
   } catch (error) {
-    console.error('[REDIS] Error getting user session:', error);
+    logger.error('[REDIS] Error getting user session', { error: error.message, userId });
     return null;
   }
 }
@@ -211,10 +242,10 @@ async function deleteUserSession(userId) {
     if (activeToken) {
       const tokenKey = `jwt:${activeToken}`;
       await redisClient.del(tokenKey);
-      console.log(`[REDIS] Deleted active session for user ${userId}`);
+      logger.debug(`[REDIS] Deleted active session for user ${userId}`);
     }
   } catch (error) {
-    console.error('[REDIS] Error deleting user session:', error);
+    logger.error('[REDIS] Error deleting user session', { error: error.message, userId });
   }
 }
 
@@ -237,7 +268,7 @@ async function isActiveSession(userId, token) {
     }
     return activeToken === token;
   } catch (error) {
-    console.error('[REDIS] Error checking active session:', error);
+    logger.error('[REDIS] Error checking active session', { error: error.message, userId });
     return true; // On error, allow the session to prevent lockouts
   }
 }
@@ -250,9 +281,9 @@ async function closeRedis() {
   if (redisClient) {
     try {
       await redisClient.quit();
-      console.log('[REDIS] Connection closed');
+      logger.info('[REDIS] Connection closed');
     } catch (error) {
-      console.error('[REDIS] Error closing connection:', error);
+      logger.error('[REDIS] Error closing connection', { error: error.message });
     }
     redisClient = null;
     isRedisEnabled = false;

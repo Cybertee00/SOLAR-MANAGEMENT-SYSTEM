@@ -141,22 +141,39 @@ api.interceptors.request.use(
   }
 );
 
-// Add response interceptor for error handling
+// Add response interceptor for error handling and activity tracking
 api.interceptors.response.use(
   (response) => {
     console.log(`API Response: ${response.config.method.toUpperCase()} ${response.config.url}`, response.status);
+    
+    // Only track successful API calls as activity (exclude auth endpoints and work context checks)
+    // This prevents failed requests from resetting the inactivity timer
+    if (!response.config.url.includes('/auth/me') && 
+        !response.config.url.includes('/auth/login') &&
+        !response.config.url.includes('/tasks?status=in_progress') && // Don't track work context checks
+        window.trackApiActivity) {
+      window.trackApiActivity();
+    }
+    
     return response;
   },
   (error) => {
+    // Don't track failed requests as activity - this prevents the feedback loop
+    // Only successful requests should reset the inactivity timer
+    
     if (error.code === 'ECONNABORTED') {
-      console.error('API Request Timeout:', error.config.url);
+      console.error('API Request Timeout:', error.config?.url);
     } else if (error.response) {
       console.error('API Error Response:', error.response.status, error.response.data);
-      console.error('Error URL:', error.config.url);
-      console.error('Error Method:', error.config.method);
+      console.error('Error URL:', error.config?.url);
+      console.error('Error Method:', error.config?.method);
     } else if (error.request) {
-      console.error('API Network Error - No response received:', error.request);
-      console.error('Check if backend is running and accessible at:', API_BASE_URL);
+      // Only log network errors, don't spam console
+      if (!error.config?.url?.includes('/tasks?status=in_progress')) {
+        // Don't log work context check failures to reduce console spam
+        console.error('API Network Error - No response received:', error.config?.url);
+        console.error('Check if backend is running and accessible at:', API_BASE_URL);
+      }
     } else {
       console.error('API Error:', error.message);
     }
@@ -177,6 +194,7 @@ export const getUsers = () => api.get('/users');
 export const getUser = (id) => api.get(`/users/${id}`);
 export const createUser = (data) => api.post('/users', data);
 export const updateUser = (id, data) => api.put(`/users/${id}`, data);
+export const getRoles = () => api.get('/users/roles');
 export const deactivateUser = (id) => api.patch(`/users/${id}/deactivate`);
 export const deleteUser = (id) => api.delete(`/users/${id}`);
 
@@ -192,6 +210,13 @@ export const getChecklistTemplatesByAssetType = (assetType) =>
   api.get(`/checklist-templates/asset-type/${assetType}`);
 export const updateChecklistTemplateMetadata = (id, data) =>
   api.patch(`/checklist-templates/${id}/metadata`, data);
+export const uploadTemplateFile = (formData) => 
+  api.post('/checklist-templates/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+export const createChecklistTemplate = (data) => api.post('/checklist-templates', data);
+export const updateChecklistTemplate = (id, data) => api.put(`/checklist-templates/${id}`, data);
+export const deleteChecklistTemplate = (id) => api.delete(`/checklist-templates/${id}`);
 
 // Helper function to make API calls offline-aware
 const makeOfflineAware = (apiCall) => {
@@ -241,7 +266,7 @@ const makeOfflineAware = (apiCall) => {
 };
 
 // Tasks
-export const getTasks = (params) => api.get('/tasks', { params });
+export const getTasks = (params, config = {}) => api.get('/tasks', { params, ...config });
 export const getTask = (id) => api.get(`/tasks/${id}`);
 export const createTask = makeOfflineAware((data) => api.post('/tasks', data));
 export const startTask = makeOfflineAware((id) => api.patch(`/tasks/${id}/start`));

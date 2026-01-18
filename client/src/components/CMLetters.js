@@ -891,7 +891,7 @@ function CMLetters() {
                                 onClick={() => setIsEditing(true)}
                                 style={{ padding: '6px 14px', fontSize: '13px' }}
                               >
-                                ✏️ Edit Fault Log
+                                Edit
                               </button>
                             )}
                           </div>

@@ -30,10 +30,14 @@ export const AuthProvider = ({ children }) => {
       console.log('Login response:', response.data);
       
       if (response.data && response.data.user) {
-        setUser(response.data.user);
+        const userData = {
+          ...response.data.user,
+          permissions: response.data.user.permissions || []
+        };
+        setUser(userData);
         return { 
           success: true, 
-          user: response.data.user,
+          user: userData,
           requires_password_change: response.data.requires_password_change || false
         };
       } else {
@@ -87,19 +91,47 @@ export const AuthProvider = ({ children }) => {
     return [];
   };
 
+  // Helper function to normalize role codes (maps legacy to RBAC)
+  const normalizeRole = (role) => {
+    const roleMapping = {
+      'super_admin': 'system_owner',
+      'admin': 'operations_admin',
+      'supervisor': 'supervisor',
+      'technician': 'technician'
+    };
+    return roleMapping[role] || role;
+  };
+
   const hasRole = (role) => {
-    const roles = getUserRoles();
-    return roles.includes(role);
+    const userRoles = getUserRoles();
+    const normalizedRole = normalizeRole(role);
+    
+    // Check if user has the role (either exact match or normalized)
+    return userRoles.some(userRole => {
+      const normalizedUserRole = normalizeRole(userRole);
+      return normalizedUserRole === normalizedRole || userRole === role;
+    });
   };
 
   const hasAnyRole = (...roles) => {
     const userRoles = getUserRoles();
-    return roles.some(role => userRoles.includes(role));
+    const normalizedRoles = roles.map(normalizeRole);
+    
+    return userRoles.some(userRole => {
+      const normalizedUserRole = normalizeRole(userRole);
+      return normalizedRoles.includes(normalizedUserRole) || roles.includes(userRole);
+    });
   };
 
-  const isAdmin = () => hasAnyRole('admin', 'super_admin');
-  const isSuperAdmin = () => hasRole('super_admin');
-  const isSupervisor = () => hasAnyRole('admin', 'super_admin', 'supervisor');
+  // isAdmin: checks for admin, super_admin, operations_admin, or system_owner
+  const isAdmin = () => hasAnyRole('admin', 'super_admin', 'operations_admin', 'system_owner');
+  
+  // isSuperAdmin: checks for super_admin or system_owner
+  const isSuperAdmin = () => hasAnyRole('super_admin', 'system_owner');
+  
+  // isSupervisor: checks for admin, super_admin, operations_admin, system_owner, or supervisor
+  const isSupervisor = () => hasAnyRole('admin', 'super_admin', 'operations_admin', 'system_owner', 'supervisor');
+  
   const isTechnician = () => hasRole('technician');
   const isAuthenticated = () => !!user;
 

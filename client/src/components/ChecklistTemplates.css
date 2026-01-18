@@ -14,11 +14,98 @@
   white-space: nowrap;
 }
 
+/* Modal styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 600px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.modal-content h3 {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.modal-content .form-group {
+  margin-bottom: 16px;
+}
+
+.modal-content .form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: #333;
+}
+
+.modal-content .form-group input,
+.modal-content .form-group select,
+.modal-content .form-group textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.modal-content .form-group textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* Checklist Structure Editor Styles */
+.checklist-structure-editor {
+  max-height: 600px;
+  overflow-y: auto;
+  padding: 10px;
+  background: #fafafa;
+  border-radius: 4px;
+}
+
+.checklist-section {
+  transition: box-shadow 0.2s;
+}
+
+.checklist-section:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.checklist-items {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
 /* Mobile responsiveness */
 @media (max-width: 768px) {
   .checklist-templates-table .btn {
     padding: 6px 12px;
     font-size: 11px;
     min-height: 30px;
+  }
+
+  .modal-content {
+    padding: 16px;
+    width: 95%;
+  }
+
+  .checklist-structure-editor {
+    max-height: 400px;
   }
 }

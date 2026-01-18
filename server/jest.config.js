@@ -1,0 +1,53 @@
+/**
+ * Jest Configuration for Server Tests
+ */
+
+module.exports = {
+  // Test environment
+  testEnvironment: 'node',
+  
+  // Test file patterns
+  testMatch: [
+    '**/__tests__/**/*.js',
+    '**/?(*.)+(spec|test).js'
+  ],
+  
+  // Coverage configuration
+  collectCoverage: false, // Set to true when running coverage
+  coverageDirectory: 'coverage',
+  coveragePathIgnorePatterns: [
+    '/node_modules/',
+    '/migrations/',
+    '/scripts/',
+    '/logs/',
+    '/uploads/',
+    '/reports/',
+    '/backups/',
+    'index.js' // Main entry point
+  ],
+  
+  // Coverage thresholds (can be enabled later)
+  // coverageThreshold: {
+  //   global: {
+  //     branches: 50,
+  //     functions: 50,
+  //     lines: 50,
+  //     statements: 50
+  //   }
+  // },
+  
+  // Setup files
+  setupFilesAfterEnv: ['<rootDir>/__tests__/setup.js'],
+  
+  // Module paths
+  moduleDirectories: ['node_modules', '<rootDir>'],
+  
+  // Clear mocks between tests
+  clearMocks: true,
+  
+  // Verbose output
+  verbose: true,
+  
+  // Test timeout (5 seconds)
+  testTimeout: 5000
+};

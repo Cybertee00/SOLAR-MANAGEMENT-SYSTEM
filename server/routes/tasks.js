@@ -210,6 +210,7 @@ module.exports = (pool) => {
       const {
         checklist_template_id,
         asset_id,
+        location, // Location field for location-based tasks
         assigned_to, // Can be single user ID or array of user IDs
         task_type,
         scheduled_date,
@@ -221,9 +222,7 @@ module.exports = (pool) => {
       if (!checklist_template_id) {
         return res.status(400).json({ error: 'checklist_template_id is required' });
       }
-      if (!asset_id) {
-        return res.status(400).json({ error: 'asset_id is required' });
-      }
+      // asset_id is now optional - tasks can be location-based instead of asset-based
 
       // Only superadmin can set budgeted_hours
       if (budgeted_hours !== undefined && !isSuperAdmin(req)) {

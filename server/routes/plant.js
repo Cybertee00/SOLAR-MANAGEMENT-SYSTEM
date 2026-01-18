@@ -154,7 +154,8 @@ module.exports = (pool) => {
         task_type,
         status_type,
         hasSession: !!req.session,
-        sessionUserId: req.session?.userId
+        sessionUserId: req.session?.userId,
+        timestamp: new Date().toISOString()
       });
 
       // Check if user is authenticated
@@ -172,6 +173,34 @@ module.exports = (pool) => {
       }
       if (!['done', 'halfway'].includes(status_type)) {
         return res.status(400).json({ error: 'status_type must be "done" or "halfway"' });
+      }
+
+      // Check for duplicate request (same user, same trackers, same type, same status within last 30 seconds)
+      const duplicateCheck = await pool.query(
+        `SELECT id, created_at FROM tracker_status_requests 
+         WHERE user_id = $1 
+         AND tracker_ids = $2 
+         AND task_type = $3 
+         AND status_type = $4 
+         AND status = 'pending'
+         AND created_at > NOW() - INTERVAL '30 seconds'`,
+        [userId, tracker_ids, task_type, status_type]
+      );
+
+      if (duplicateCheck.rows.length > 0) {
+        console.log(`[PLANT] ⚠️ Duplicate request detected and prevented:`, {
+          userId,
+          tracker_ids,
+          task_type,
+          status_type,
+          existing_id: duplicateCheck.rows[0].id,
+          existing_created_at: duplicateCheck.rows[0].created_at
+        });
+        return res.status(409).json({ 
+          error: 'Duplicate request detected',
+          message: 'A similar request was submitted recently. Please wait a moment before submitting again.',
+          existing_request_id: duplicateCheck.rows[0].id
+        });
       }
 
       // Get user info
@@ -193,13 +222,29 @@ module.exports = (pool) => {
 
       const request = result.rows[0];
 
-      // Get all admins and super admins
+      // Get all admins and super admins (using DISTINCT to prevent duplicates)
+      // Check both legacy role column and new RBAC roles array
       const adminsResult = await pool.query(
-        `SELECT id, full_name, username FROM users 
-         WHERE (role IN ('admin', 'super_admin') 
-            OR (roles IS NOT NULL AND (roles::text LIKE '%admin%' OR roles::text LIKE '%super_admin%')))
-         AND is_active = true`
+        `SELECT DISTINCT id, full_name, username FROM users 
+         WHERE is_active = true
+         AND (
+           -- Legacy role check
+           role IN ('admin', 'super_admin')
+           OR
+           -- RBAC roles check (check for operations_admin, system_owner, or legacy admin roles)
+           (
+             roles IS NOT NULL 
+             AND (
+               roles::text LIKE '%"operations_admin"%'
+               OR roles::text LIKE '%"system_owner"%'
+               OR roles::text LIKE '%"admin"%'
+               OR roles::text LIKE '%"super_admin"%'
+             )
+           )
+         )`
       );
+      
+      console.log(`[PLANT] Found ${adminsResult.rows.length} admin(s) to notify for tracker status request ${request.id}`);
 
       // Create notifications for all admins/super admins
       const statusText = status_type === 'done' ? 'completed' : 'halfway done';
@@ -207,25 +252,39 @@ module.exports = (pool) => {
       const title = `Tracker Status Request - ${taskText}`;
       const messageText = `${user.full_name || user.username} has marked ${tracker_ids.length} tracker(s) as ${statusText} for ${taskText}. Trackers: ${tracker_ids.join(', ')}`;
 
+      // Create notifications for all admins/super admins
+      // idempotency_key will automatically prevent duplicates
       for (const admin of adminsResult.rows) {
-        await createNotification(pool, {
-          user_id: admin.id,
-          type: 'tracker_status_request',
-          title: title,
-          message: messageText,
-          metadata: {
-            request_id: request.id,
-            tracker_ids: tracker_ids,
-            task_type: task_type,
-            status_type: status_type,
-            requested_by: {
-              id: userId,
-              full_name: user.full_name,
-              username: user.username
-            },
-            message: message || null
+        try {
+          await createNotification(pool, {
+            user_id: admin.id,
+            type: 'tracker_status_request',
+            title: title,
+            message: messageText,
+            metadata: {
+              request_id: request.id,
+              tracker_ids: tracker_ids,
+              task_type: task_type,
+              status_type: status_type,
+              requested_by: {
+                id: userId,
+                full_name: user.full_name,
+                username: user.username
+              },
+              message: message || null
+            }
+          });
+          
+          console.log(`[PLANT] ✅ Notification created for admin ${admin.id} (${admin.username}) for request ${request.id}`);
+        } catch (notifError) {
+          // Check if error is due to unique constraint violation (duplicate prevented by database/idempotency_key)
+          if (notifError.code === '23505') {
+            console.log(`[PLANT] ⚠️ Duplicate notification prevented by idempotency_key for admin ${admin.id} (${admin.username}) for request ${request.id}`);
+            continue;
           }
-        });
+          console.error(`[PLANT] ❌ Error creating notification for admin ${admin.id}:`, notifError);
+          // Continue with other admins even if one fails
+        }
       }
 
       console.log(`[PLANT] ✅ Tracker status request created: ${request.id} by user ${userId}`);
@@ -430,7 +489,21 @@ module.exports = (pool) => {
       );
       const requester = requesterResult.rows[0];
 
-      // Notify the requester
+      // Mark original notification as read for the reviewer (admin who approved/rejected)
+      // This marks all tracker_status_request notifications for this request_id that belong to the reviewer
+      await pool.query(
+        `UPDATE notifications 
+         SET is_read = true, read_at = CURRENT_TIMESTAMP 
+         WHERE type = 'tracker_status_request' 
+         AND metadata->>'request_id' = $1
+         AND user_id = $2
+         AND is_read = false`,
+        [id, reviewerId]
+      );
+
+      console.log(`[PLANT] Marked original notification as read for reviewer ${reviewerId} for request ${id}`);
+
+      // Notify the requester (only create if it doesn't already exist to prevent duplicates)
       const statusText = action === 'approve' ? 'approved' : 'rejected';
       const taskText = request.task_type === 'grass_cutting' ? 'Grass Cutting' : 'Panel Wash';
       const statusTypeText = request.status_type === 'done' ? 'completed' : 'halfway done';
@@ -442,6 +515,7 @@ module.exports = (pool) => {
         ? `Your request to mark ${request.tracker_ids.length} tracker(s) as ${statusTypeText} for ${taskText} has been approved. Trackers: ${request.tracker_ids.join(', ')}`
         : `Your request to mark ${request.tracker_ids.length} tracker(s) as ${statusTypeText} for ${taskText} has been rejected.${rejection_reason ? ` Reason: ${rejection_reason}` : ''}`;
 
+      // Create notification for requester (idempotency_key will prevent duplicates automatically)
       await createNotification(pool, {
         user_id: request.user_id,
         type: `tracker_status_${statusText}`,
@@ -456,6 +530,7 @@ module.exports = (pool) => {
           rejection_reason: rejection_reason || null
         }
       });
+      console.log(`[PLANT] Created notification for requester ${request.user_id} for request ${id}`);
 
       console.log(`[PLANT] Tracker status request ${id} ${statusText} by user ${reviewerId}`);
       res.json({ success: true, status: newStatus });

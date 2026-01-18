@@ -1,6 +1,7 @@
 // Authentication middleware
 const { verifyToken, extractToken } = require('../utils/jwt');
 const { getTokenData, isRedisAvailable, isActiveSession } = require('../utils/redis');
+const { loadUserRBAC, loadUserPermissions, loadUserRoles } = require('./rbac');
 
 /**
  * Middleware factory to check if password change is required
@@ -79,6 +80,7 @@ async function requireAuth(req, res, next) {
         req.session.roles = decoded.roles;
         req.session.role = decoded.role;
         req.session.fullName = decoded.fullName;
+        req.session.permissions = decoded.permissions || [];
         req.session.isJWT = true; // Flag to indicate JWT authentication
       } else {
         // If Redis is not available, use decoded token data directly
@@ -88,6 +90,7 @@ async function requireAuth(req, res, next) {
         req.session.roles = decoded.roles;
         req.session.role = decoded.role;
         req.session.fullName = decoded.fullName;
+        req.session.permissions = decoded.permissions || [];
         req.session.isJWT = true;
       }
       
@@ -114,6 +117,18 @@ async function requireAuth(req, res, next) {
     console.log('Authentication failed - no session or userId');
     return res.status(401).json({ error: 'Authentication required' });
   }
+  
+  // Load RBAC data if not already loaded (for session-based auth)
+  if (req.db && (!req.session.permissions || !req.session.roles || req.session.roles.length === 0)) {
+    try {
+      const { loadUserRBAC } = require('./rbac');
+      await loadUserRBAC(req, res, () => {});
+    } catch (error) {
+      console.error('Error loading RBAC in requireAuth:', error);
+      // Continue anyway
+    }
+  }
+  
   next();
 }
 
@@ -140,55 +155,87 @@ function getUserRoles(req) {
 }
 
 /**
+ * Helper function to normalize role codes (maps legacy to RBAC)
+ */
+function normalizeRole(role) {
+  const roleMapping = {
+    'super_admin': 'system_owner',
+    'admin': 'operations_admin',
+    'supervisor': 'supervisor',
+    'technician': 'technician'
+  };
+  return roleMapping[role] || role;
+}
+
+/**
  * Helper function to check if user has a specific role
+ * Supports both legacy roles (super_admin, admin) and RBAC roles (system_owner, operations_admin)
  */
 function hasRole(req, role) {
   const roles = getUserRoles(req);
-  return roles.includes(role);
+  const normalizedRole = normalizeRole(role);
+  
+  // Check if user has the role (either exact match or normalized)
+  return roles.some(userRole => {
+    const normalizedUserRole = normalizeRole(userRole);
+    return normalizedUserRole === normalizedRole || userRole === role;
+  });
 }
 
 /**
  * Helper function to check if user has any of the specified roles
+ * Supports both legacy roles and RBAC roles
  */
 function hasAnyRole(req, ...roles) {
   const userRoles = getUserRoles(req);
-  return roles.some(role => userRoles.includes(role));
+  const normalizedRoles = roles.map(normalizeRole);
+  
+  return userRoles.some(userRole => {
+    const normalizedUserRole = normalizeRole(userRole);
+    return normalizedRoles.includes(normalizedUserRole) || roles.includes(userRole);
+  });
 }
 
 /**
- * Middleware to check if user has super_admin role
+ * Middleware to check if user has super_admin or system_owner role
+ * system_owner is the RBAC equivalent of super_admin
  */
 function requireSuperAdmin(req, res, next) {
   if (!req.session || !req.session.userId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
-  if (!hasRole(req, 'super_admin')) {
-    return res.status(403).json({ error: 'Super admin access required' });
+  // Check for both legacy super_admin and RBAC system_owner
+  if (!hasAnyRole(req, 'super_admin', 'system_owner')) {
+    return res.status(403).json({ error: 'Super admin or system owner access required' });
   }
   next();
 }
 
 /**
- * Middleware to check if user has admin or super_admin role
+ * Middleware to check if user has admin, super_admin, operations_admin, or system_owner role
+ * operations_admin is the RBAC equivalent of admin
+ * system_owner also has admin privileges
  */
 function requireAdmin(req, res, next) {
   if (!req.session || !req.session.userId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
-  if (!hasAnyRole(req, 'admin', 'super_admin')) {
+  // Check for both legacy roles (admin, super_admin) and RBAC roles (operations_admin, system_owner)
+  if (!hasAnyRole(req, 'admin', 'super_admin', 'operations_admin', 'system_owner')) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
 }
 
 /**
- * Middleware to check if user has admin, super_admin, or supervisor role
+ * Middleware to check if user has admin, super_admin, operations_admin, system_owner, or supervisor role
  */
 function requireAdminOrSupervisor(req, res, next) {
   if (!req.session || !req.session.userId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
-  if (!hasAnyRole(req, 'admin', 'super_admin', 'supervisor')) {
+  // Check for both legacy roles (admin, super_admin, supervisor) and RBAC roles (operations_admin, system_owner, supervisor)
+  if (!hasAnyRole(req, 'admin', 'super_admin', 'operations_admin', 'system_owner', 'supervisor')) {
     return res.status(403).json({ error: 'Admin or supervisor access required' });
   }
   next();
@@ -198,14 +245,16 @@ function requireAdminOrSupervisor(req, res, next) {
  * Helper function to check if user is super admin
  */
 function isSuperAdmin(req) {
-  return hasRole(req, 'super_admin');
+  // Check for both legacy super_admin and RBAC system_owner
+  return hasAnyRole(req, 'super_admin', 'system_owner');
 }
 
 /**
- * Helper function to check if user is admin or super admin
+ * Helper function to check if user is admin, super admin, operations admin, or system owner
  */
 function isAdmin(req) {
-  return hasAnyRole(req, 'admin', 'super_admin');
+  // Check for both legacy roles (admin, super_admin) and RBAC roles (operations_admin, system_owner)
+  return hasAnyRole(req, 'admin', 'super_admin', 'operations_admin', 'system_owner');
 }
 
 /**

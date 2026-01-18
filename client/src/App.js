@@ -21,6 +21,8 @@ import ProtectedRoute from './components/ProtectedRoute';
 import PasswordChangeModal from './components/PasswordChangeModal';
 import LicenseStatus from './components/LicenseStatus';
 import OfflineIndicator from './components/OfflineIndicator';
+import InactivityWarningModal from './components/InactivityWarningModal';
+import { useInactivityTimeout } from './hooks/useInactivityTimeout';
 import syncManager from './utils/syncManager';
 import './App.css';
 
@@ -39,6 +41,17 @@ function App() {
 function AppContent() {
   const { user, checkAuth } = useAuth();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  
+  // Initialize inactivity timeout detection
+  const { showWarning, timeRemaining, extendSession, trackApiActivity } = useInactivityTimeout();
+  
+  // Expose trackApiActivity globally for API interceptor
+  useEffect(() => {
+    window.trackApiActivity = trackApiActivity;
+    return () => {
+      delete window.trackApiActivity;
+    };
+  }, [trackApiActivity]);
 
   // Check if user needs to change password on mount or when user changes
   useEffect(() => {
@@ -84,6 +97,11 @@ function AppContent() {
         isOpen={showPasswordModal}
         onClose={handleModalClose}
         onSuccess={handlePasswordChangeSuccess}
+      />
+      <InactivityWarningModal
+        show={showWarning && !showPasswordModal}
+        timeRemaining={timeRemaining}
+        onExtendSession={extendSession}
       />
       <div className="container">
         <Routes>
@@ -266,7 +284,7 @@ function NotificationBadge() {
 function Header() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout, isAdmin, isSuperAdmin, isTechnician, getUserRoles } = useAuth();
+  const { user, logout, isAdmin, isSuperAdmin, isTechnician, hasRole } = useAuth();
   const [tasksDropdownOpen, setTasksDropdownOpen] = useState(false);
   const [tasksDropdownTimeout, setTasksDropdownTimeout] = useState(null);
 
@@ -279,10 +297,6 @@ function Header() {
     return null; // Don't show header on login page
   }
 
-  // Get user roles for display
-  const userRoles = getUserRoles();
-  const rolesDisplay = userRoles.length > 0 ? userRoles.join(', ') : (user.role || 'technician');
-
   const isTasksActive = location.pathname.startsWith('/tasks');
 
   return (
@@ -291,7 +305,6 @@ function Header() {
         <h1>SIE Management System</h1>
         <div className="header-user">
           <span className="user-name">{user.full_name || user.username}</span>
-          <span className="user-role">({rolesDisplay})</span>
           <button className="btn btn-sm btn-secondary header-logout" onClick={handleLogout}>
             Logout
           </button>
@@ -389,11 +402,18 @@ function Header() {
             </div>
           )}
         </div>
-        {!isTechnician() && (
-          <Link to="/checklist-templates" className={location.pathname === '/checklist-templates' ? 'active' : ''}>
-            Templates
-          </Link>
-        )}
+        {(() => {
+          // Hide Templates for GENERAL_WORKER, TECHNICIAN, Inventory Controller, and SUPERVISOR
+          const canViewTemplates = !hasRole('general_worker') && 
+                                   !hasRole('technician') && 
+                                   !hasRole('inventory_controller') && 
+                                   !hasRole('supervisor');
+          return canViewTemplates && (
+            <Link to="/checklist-templates" className={location.pathname === '/checklist-templates' ? 'active' : ''}>
+              Templates
+            </Link>
+          );
+        })()}
         <Link to="/cm-letters" className={location.pathname === '/cm-letters' ? 'active' : ''}>
           CM Letters
         </Link>

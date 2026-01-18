@@ -460,3 +460,45 @@
   }
 }
 
+/* Role Descriptions Section */
+.role-descriptions {
+  margin-bottom: 20px;
+  padding: 12px;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.role-descriptions strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.role-descriptions ul {
+  margin: 4px 0 0 0;
+  padding-left: 20px;
+  color: #555;
+}
+
+.role-descriptions li {
+  margin-bottom: 2px;
+  font-size: 11px;
+}
+
+@media (max-width: 768px) {
+  .role-descriptions {
+    font-size: 11px;
+    padding: 10px;
+  }
+  
+  .role-descriptions > div {
+    grid-template-columns: 1fr !important;
+  }
+  
+  .role-descriptions li {
+    font-size: 10px;
+  }
+}

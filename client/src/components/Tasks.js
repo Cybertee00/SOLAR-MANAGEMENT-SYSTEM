@@ -77,11 +77,22 @@ function Tasks() {
   const handleCreateTask = async (e) => {
     e.preventDefault();
     
+    // Frontend validation: Ensure required fields are present
+    if (!newTask.checklist_template_id || newTask.checklist_template_id.trim() === '') {
+      alert('Please select a checklist template');
+      return;
+    }
+    
     try {
       // Allow manual scheduling for all task types
       // If not provided, backend will set appropriate defaults
+      // Convert empty strings to undefined to match validation expectations
       const taskData = {
         ...newTask,
+        checklist_template_id: newTask.checklist_template_id.trim(), // Required - ensure it's not empty
+        location: newTask.location && newTask.location.trim() ? newTask.location.trim() : undefined,
+        assigned_to: newTask.assigned_to && newTask.assigned_to.length > 0 ? newTask.assigned_to : undefined,
+        task_type: newTask.task_type || 'PM',
         scheduled_date: newTask.scheduled_date || undefined, // Send if provided, otherwise let backend decide
         hours_worked: newTask.hours_worked ? parseFloat(newTask.hours_worked) : undefined,
         budgeted_hours: isSuperAdmin() && newTask.budgeted_hours ? parseFloat(newTask.budgeted_hours) : undefined
@@ -119,14 +130,14 @@ function Tasks() {
         <h2 style={{ marginBottom: 0 }}>PM Tasks</h2>
         {isAdmin() && (
           <button className="btn btn-sm btn-primary" onClick={() => setShowCreateForm(!showCreateForm)} style={{ padding: '8px 16px', fontSize: '13px' }}>
-            {showCreateForm ? 'Cancel' : 'Create New Task'}
+            {showCreateForm ? 'Cancel' : 'New'}
           </button>
         )}
       </div>
 
       {showCreateForm && (
         <div className="card">
-          <h3>Create New Task</h3>
+          <h3>New Task</h3>
           <form onSubmit={handleCreateTask}>
             <div className="form-group">
               <label>Checklist Template</label>
@@ -144,15 +155,17 @@ function Tasks() {
               </select>
             </div>
             <div className="form-group">
-              <label>Location</label>
+              <label>Location (Optional)</label>
               <input
                 type="text"
                 value={newTask.location}
                 onChange={(e) => setNewTask({ ...newTask, location: e.target.value })}
                 placeholder="Enter location (e.g., DC Combiner Board, Inverter 1, etc.)"
-                required
                 style={{ width: '100%', padding: '8px 12px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '4px' }}
               />
+              <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                Optional: Specify the location for this task
+              </small>
             </div>
             {isAdmin() && (
               <div className="form-group">
@@ -321,7 +334,7 @@ function Tasks() {
                 </small>
               </div>
             )}
-            <button type="submit" className="btn btn-primary">Create Task</button>
+            <button type="submit" className="btn btn-primary">Create</button>
           </form>
         </div>
       )}

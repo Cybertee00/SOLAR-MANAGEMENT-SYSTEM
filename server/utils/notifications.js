@@ -3,10 +3,61 @@
  * Handles creating and managing notifications for users
  */
 
+const crypto = require('crypto');
 const { sendTaskAssignmentEmail, sendTaskReminderEmail } = require('./email');
 
 /**
- * Create a notification for a user
+ * Generate a deterministic idempotency key for a notification
+ * This key uniquely identifies a notification based on its content
+ * @param {Object} notificationData - Notification data
+ * @returns {string} Idempotency key
+ */
+function generateIdempotencyKey(notificationData) {
+  const { user_id, type, task_id, metadata } = notificationData;
+  const metadataObj = metadata ? (typeof metadata === 'string' ? JSON.parse(metadata) : metadata) : null;
+  
+  // Build identifying fields based on notification type
+  let identifyingFields = {
+    user_id,
+    type,
+    task_id: task_id || null
+  };
+  
+  // Add type-specific identifying fields
+  if (type === 'tracker_status_request' || type.startsWith('tracker_status_')) {
+    // For tracker status notifications, use request_id, task_type, status_type
+    identifyingFields.request_id = metadataObj?.request_id || null;
+    identifyingFields.task_type = metadataObj?.task_type || null;
+    identifyingFields.status_type = metadataObj?.status_type || null;
+    // Round timestamp to minute to prevent duplicates from rapid submissions
+    const now = new Date();
+    identifyingFields.time_bucket = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  } else if (type === 'task_assigned' || type === 'task_reminder') {
+    // For task notifications, use task_id and scheduled_date
+    identifyingFields.task_id = task_id;
+    identifyingFields.scheduled_date = metadataObj?.scheduled_date || metadataObj?.task?.scheduled_date || null;
+  } else if (type.startsWith('early_completion_')) {
+    // For early completion, use request_id
+    identifyingFields.request_id = metadataObj?.request_id || null;
+  } else if (type === 'task_flagged') {
+    // For flagged tasks, use task_id
+    identifyingFields.task_id = task_id;
+  } else if (type === 'overtime_request') {
+    // For overtime requests, use overtime_request_id
+    identifyingFields.overtime_request_id = metadataObj?.overtime_request_id || null;
+    identifyingFields.request_type = metadataObj?.request_type || null;
+  }
+  
+  // Create a deterministic hash from the identifying fields
+  const keyString = JSON.stringify(identifyingFields);
+  const hash = crypto.createHash('sha256').update(keyString).digest('hex').substring(0, 16);
+  
+  // Return a readable key format: {user_id}_{type}_{hash}
+  return `${user_id}_${type}_${hash}`;
+}
+
+/**
+ * Create a notification for a user with idempotency protection
  * @param {Object} pool - Database connection pool
  * @param {Object} notificationData - Notification data
  * @param {string} notificationData.user_id - User ID to notify
@@ -17,21 +68,137 @@ const { sendTaskAssignmentEmail, sendTaskReminderEmail } = require('./email');
  * @param {Object} notificationData.metadata - Additional metadata (optional)
  */
 async function createNotification(pool, notificationData) {
+  const client = await pool.connect();
+  
   try {
+    await client.query('BEGIN');
+    
     const { user_id, task_id, type, title, message, metadata } = notificationData;
     
-    const result = await pool.query(
-      `INSERT INTO notifications (user_id, task_id, type, title, message, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id`,
-      [user_id, task_id || null, type, title, message, metadata ? JSON.stringify(metadata) : null]
+    // Generate deterministic idempotency key
+    const idempotencyKey = generateIdempotencyKey(notificationData);
+    
+    // Enhanced logging
+    const metadataObj = metadata ? (typeof metadata === 'string' ? JSON.parse(metadata) : metadata) : null;
+    const requestId = metadataObj?.request_id || null;
+    
+    console.log(`[NOTIFICATIONS] Creating notification with idempotency key:`, {
+      user_id,
+      type,
+      title,
+      request_id: requestId,
+      idempotency_key: idempotencyKey,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Application-level check: Check if notification with this idempotency key already exists
+    // Use SELECT FOR UPDATE to lock the row and prevent concurrent inserts
+    const existingCheck = await client.query(
+      `SELECT id, created_at FROM notifications 
+       WHERE idempotency_key = $1
+       FOR UPDATE`,
+      [idempotencyKey]
     );
     
-    console.log(`Notification created: ${type} for user ${user_id}`);
+    if (existingCheck.rows.length > 0) {
+      console.log(`[NOTIFICATIONS] ⚠️ Duplicate notification detected by idempotency key, returning existing:`, {
+        user_id,
+        type,
+        idempotency_key: idempotencyKey,
+        existing_id: existingCheck.rows[0].id,
+        existing_created_at: existingCheck.rows[0].created_at
+      });
+      await client.query('COMMIT');
+      return { id: existingCheck.rows[0].id };
+    }
+    
+    // Insert notification with idempotency key
+    // The application-level check above should prevent most duplicates
+    // If a duplicate still occurs (race condition), the unique index will prevent it
+    const result = await client.query(
+      `INSERT INTO notifications (user_id, task_id, type, title, message, metadata, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, created_at`,
+      [
+        user_id, 
+        task_id || null, 
+        type, 
+        title, 
+        message, 
+        metadata ? JSON.stringify(metadata) : null,
+        idempotencyKey
+      ]
+    );
+    
+    // If insert was skipped due to conflict, fetch the existing notification
+    if (result.rows.length === 0) {
+      const existing = await client.query(
+        `SELECT id, created_at FROM notifications 
+         WHERE idempotency_key = $1`,
+        [idempotencyKey]
+      );
+      
+      if (existing.rows.length > 0) {
+        console.log(`[NOTIFICATIONS] ⚠️ Notification already exists (database conflict), returning existing:`, {
+          idempotency_key: idempotencyKey,
+          existing_id: existing.rows[0].id
+        });
+        await client.query('COMMIT');
+        return { id: existing.rows[0].id };
+      }
+    }
+    
+    await client.query('COMMIT');
+    
+    console.log(`[NOTIFICATIONS] ✅ Notification created successfully:`, {
+      id: result.rows[0].id,
+      user_id,
+      type,
+      request_id: requestId,
+      idempotency_key: idempotencyKey,
+      created_at: result.rows[0].created_at
+    });
+    
     return result.rows[0];
   } catch (error) {
-    console.error('Error creating notification:', error);
+    await client.query('ROLLBACK');
+    
+    // Check if error is due to unique constraint violation (additional safety)
+    if (error.code === '23505') {
+      console.log(`[NOTIFICATIONS] ⚠️ Unique constraint violation (duplicate prevented by database):`, {
+        user_id: notificationData.user_id,
+        type: notificationData.type,
+        idempotency_key: generateIdempotencyKey(notificationData),
+        error: error.message
+      });
+      
+      // Try to fetch the existing notification
+      try {
+        const idempotencyKey = generateIdempotencyKey(notificationData);
+        const existing = await pool.query(
+          `SELECT id FROM notifications 
+           WHERE idempotency_key = $1
+           ORDER BY created_at DESC LIMIT 1`,
+          [idempotencyKey]
+        );
+        if (existing.rows.length > 0) {
+          return { id: existing.rows[0].id };
+        }
+      } catch (fetchError) {
+        console.error('[NOTIFICATIONS] Error fetching existing notification:', fetchError);
+      }
+    }
+    
+    console.error('[NOTIFICATIONS] ❌ Error creating notification:', {
+      error: error.message,
+      code: error.code,
+      user_id: notificationData.user_id,
+      type: notificationData.type,
+      idempotency_key: generateIdempotencyKey(notificationData)
+    });
     throw error;
+  } finally {
+    client.release();
   }
 }
 

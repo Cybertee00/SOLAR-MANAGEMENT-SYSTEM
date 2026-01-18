@@ -59,12 +59,16 @@ const sanitizeString = (field) => {
 
 /**
  * Validate UUID format
+ * Handles undefined/empty values with clear error messages
+ * Note: Use .optional() when chaining if the field is optional
  */
 const validateUUID = (field, location = 'param') => {
   const validator = location === 'param' ? param : body;
   return validator(field)
+    .notEmpty()
+    .withMessage(`${field} is required`)
     .isUUID()
-    .withMessage(`${field} must be a valid UUID`);
+    .withMessage(`${field} must be a valid UUID format`);
 };
 
 /**
@@ -108,12 +112,18 @@ const validatePassword = (fieldName = 'password', minLength = 6) => {
 
 /**
  * Validate role
+ * Supports both legacy roles and RBAC roles
  */
 const validateRole = () => {
   return body('role')
     .optional()
-    .isIn(['admin', 'super_admin', 'supervisor', 'technician'])
-    .withMessage('Role must be one of: admin, super_admin, supervisor, technician');
+    .isIn([
+      // Legacy roles
+      'admin', 'super_admin', 'supervisor', 'technician',
+      // RBAC roles
+      'system_owner', 'operations_admin', 'general_worker', 'inventory_controller'
+    ])
+    .withMessage('Role must be one of: admin, super_admin, supervisor, technician, system_owner, operations_admin, general_worker, inventory_controller');
 };
 
 /**
@@ -122,8 +132,8 @@ const validateRole = () => {
 const validateTaskType = () => {
   return body('task_type')
     .optional()
-    .isIn(['PM', 'PCM', 'UCM'])
-    .withMessage('Task type must be one of: PM, PCM, UCM');
+    .isIn(['PM', 'PCM', 'UCM', 'CM', 'INSPECTION'])
+    .withMessage('Task type must be one of: PM, PCM, UCM, CM, INSPECTION');
 };
 
 /**
@@ -233,16 +243,23 @@ const validateCreateUser = [
   validateString('full_name', 255, true),
   validateRole(),
   body('roles')
-    .optional()
+    .notEmpty()
+    .withMessage('At least one role must be selected')
     .isArray()
     .withMessage('roles must be an array')
     .custom((roles) => {
-      if (roles && roles.length > 0) {
-        const validRoles = ['technician', 'supervisor', 'admin', 'super_admin'];
-        const invalidRoles = roles.filter(r => !validRoles.includes(r));
-        if (invalidRoles.length > 0) {
-          throw new Error(`Invalid roles: ${invalidRoles.join(', ')}. Valid roles: ${validRoles.join(', ')}`);
-        }
+      if (!Array.isArray(roles) || roles.length === 0) {
+        throw new Error('At least one role must be selected');
+      }
+      const validRoles = [
+        // Legacy roles
+        'technician', 'supervisor', 'admin', 'super_admin',
+        // RBAC roles
+        'system_owner', 'operations_admin', 'general_worker', 'inventory_controller'
+      ];
+      const invalidRoles = roles.filter(r => !validRoles.includes(r));
+      if (invalidRoles.length > 0) {
+        throw new Error(`Invalid roles: ${invalidRoles.join(', ')}. Valid roles: ${validRoles.join(', ')}`);
       }
       return true;
     }),
@@ -267,8 +284,17 @@ const validateUpdateUser = [
     .isArray()
     .withMessage('roles must be an array')
     .custom((roles) => {
-      if (roles && roles.length > 0) {
-        const validRoles = ['technician', 'supervisor', 'admin', 'super_admin'];
+      // If roles are provided, they must not be empty
+      if (roles !== undefined && roles !== null) {
+        if (!Array.isArray(roles) || roles.length === 0) {
+          throw new Error('If roles are provided, at least one role must be selected');
+        }
+        const validRoles = [
+          // Legacy roles
+          'technician', 'supervisor', 'admin', 'super_admin',
+          // RBAC roles
+          'system_owner', 'operations_admin', 'general_worker', 'inventory_controller'
+        ];
         const invalidRoles = roles.filter(r => !validRoles.includes(r));
         if (invalidRoles.length > 0) {
           throw new Error(`Invalid roles: ${invalidRoles.join(', ')}. Valid roles: ${validRoles.join(', ')}`);
@@ -305,15 +331,79 @@ const validateLogin = [
 ];
 
 /**
+ * Validate array of UUIDs (for assigned_to field)
+ */
+const validateUUIDArray = (field) => {
+  return body(field)
+    .optional()
+    .custom((value) => {
+      // Allow null, undefined, or empty array
+      if (value === null || value === undefined) return true;
+      if (Array.isArray(value) && value.length === 0) return true;
+      
+      // If it's a single value, convert to array for validation
+      const values = Array.isArray(value) ? value : [value];
+      
+      // Validate each value is a UUID
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      for (const val of values) {
+        if (!uuidRegex.test(val)) {
+          throw new Error(`${field} must contain valid UUIDs`);
+        }
+      }
+      return true;
+    })
+    .withMessage(`${field} must be an array of valid UUIDs or a single UUID`);
+};
+
+/**
+ * Validate positive number (for hours_worked and budgeted_hours)
+ */
+const validatePositiveNumber = (field) => {
+  return body(field)
+    .optional()
+    .custom((value) => {
+      if (value === null || value === undefined || value === '') return true;
+      const num = typeof value === 'string' ? parseFloat(value) : value;
+      if (isNaN(num)) return false;
+      if (num < 0) return false;
+      return true;
+    })
+    .withMessage(`${field} must be a non-negative number`)
+    .customSanitizer((value) => {
+      if (value === null || value === undefined || value === '') return undefined;
+      return typeof value === 'string' ? parseFloat(value) : value;
+    });
+};
+
+/**
  * Task creation validation schema
+ * Updated to match current task creation model:
+ * - asset_id is optional (location-based tasks)
+ * - assigned_to can be array of UUIDs or single UUID
+ * - location field added
+ * - hours_worked and budgeted_hours added (optional)
+ * - task_type includes CM and INSPECTION
  */
 const validateCreateTask = [
-  removeUnexpectedFields(['checklist_template_id', 'asset_id', 'assigned_to', 'task_type', 'scheduled_date']),
-  validateUUID('checklist_template_id', 'body'),
-  validateUUID('asset_id', 'body'),
-  validateUUID('assigned_to', 'body').optional(),
+  removeUnexpectedFields([
+    'checklist_template_id', 
+    'asset_id', 
+    'assigned_to', 
+    'task_type', 
+    'scheduled_date',
+    'location',
+    'hours_worked',
+    'budgeted_hours'
+  ]),
+  validateUUID('checklist_template_id', 'body'), // Required - explicitly validated with .notEmpty()
+  validateUUID('asset_id', 'body').optional(), // Made optional - location-based tasks
+  validateUUIDArray('assigned_to'), // Accepts array of UUIDs or single UUID
   validateTaskType(),
   validateDate('scheduled_date').optional(),
+  validateString('location', 255).optional(), // Location field (max 255 chars) - optional
+  validatePositiveNumber('hours_worked'), // Optional positive number
+  validatePositiveNumber('budgeted_hours'), // Optional positive number
   handleValidationErrors
 ];
 

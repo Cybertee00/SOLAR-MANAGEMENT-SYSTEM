@@ -159,7 +159,14 @@ The system displays a status indicator at the top of the screen showing:
   - **Idle Timeout** (45 minutes): Standard security timeout for inactive sessions
 - **Password Management**: Forced password change on first login
 - **User Profile Management**: Complete user profile and account management
-- **License Management**: System-wide license control and validation
+- **License Management**: System-wide license control with signed token validation (HMAC-SHA256), multi-tenant support, tier management, feature flags, and revocation mechanism
+- **Rate Limiting**: Production-grade rate limiting to prevent brute force and abuse:
+  - General API: 100 requests per 15 minutes
+  - Authentication: 5 login attempts per 15 minutes
+  - Sensitive operations: 10 requests per hour
+- **File Upload Security**: Magic number validation to prevent MIME type spoofing attacks
+- **Structured Logging**: Winston-based logging with daily rotation, sanitization, and environment-aware output
+- **Standardized Error Handling**: Custom error classes for consistent API error responses
 
 ### Offline Support
 - **Offline Task Management**: Start, pause, resume, and complete tasks offline
@@ -172,13 +179,15 @@ The system displays a status indicator at the top of the screen showing:
 - **Backend**: Node.js + Express
 - **Frontend**: React (PWA) with React Icons
 - **Database**: PostgreSQL (with JSONB for flexible data structures)
-- **Session Management**: Redis (optional) for single-device-per-session
+- **Session Management**: Redis (required in production) for single-device-per-session
 - **File Processing**: 
   - Excel: `exceljs` for parsing `.xlsx` and `.xls` files
   - Word: `mammoth` for parsing `.docx` files
+- **Logging**: Winston for structured logging with daily rotation
+- **Testing**: Jest with Supertest for unit and integration testing
 - **Deployment**: Docker + Docker Compose
 - **Update Service**: Secure authenticated updates (no backdoors)
-- **Security**: Role-based access control with granular permissions
+- **Security**: Role-based access control with granular permissions, rate limiting, file validation
 
 ## Deployment
 
@@ -201,6 +210,7 @@ For deployment instructions, see:
 
 - Node.js (v14 or higher)
 - PostgreSQL (v12 or higher)
+- Redis (required for production, optional for development)
 - npm or yarn
 
 ## Installation
@@ -383,7 +393,7 @@ SPHAiRPlatform implements **single-device-per-session** security to enhance appl
 - All subsequent requests validate that the token matches the active session
 - On logout, the active session is cleared, allowing login from any device
 
-**Note**: This feature requires Redis to be enabled (`REDIS_ENABLED=true`). The system gracefully degrades if Redis is unavailable, allowing multiple sessions (backward compatibility).
+**Note**: This feature requires Redis to be enabled (`REDIS_ENABLED=true`). In production, Redis is required and the server will exit if Redis is unavailable. In development, the system gracefully degrades if Redis is unavailable, allowing multiple sessions (backward compatibility).
 
 ### Two-Tier Inactivity Timeout
 
@@ -497,13 +507,32 @@ cd client
 npm start  # React development server with hot reload
 ```
 
-## Testing Locally
+## Testing
 
-1. Ensure PostgreSQL is running
+### Running Tests
+
+```bash
+cd server
+npm test              # Run all tests
+npm run test:watch    # Run tests in watch mode
+npm run test:coverage # Run tests with coverage report
+```
+
+### Testing Locally
+
+1. Ensure PostgreSQL is running (and Redis for production features)
 2. Run database setup: `cd server && npm run setup-db`
 3. Start the application: `npm run dev`
 4. Open browser to `http://localhost:3000`
 5. Login with default credentials (if implemented) or use the API directly
+
+### Test Coverage
+
+The system includes tests for:
+- License token generation and verification
+- Error handling and custom error classes
+- Critical utility functions
+- Additional route tests (can be expanded)
 
 ## Default Data
 
@@ -626,6 +655,77 @@ SPHAiRPlatform uses a comprehensive RBAC system with six defined roles:
 ### Permission-Based Access
 
 Access is defined by permissions (e.g., `templates:create`, `templates:update`, `templates:delete`, `users:read`, `users:create`, `plant:approve_status`), not just roles. This allows for granular control and easy extension with additional roles or permissions.
+
+## Production Features
+
+### Rate Limiting
+
+SPHAiRPlatform implements comprehensive rate limiting to protect against brute force attacks and API abuse:
+
+- **Standard API Endpoints**: 100 requests per 15 minutes per IP/user
+- **Authentication Endpoints**: 5 login attempts per 15 minutes per IP
+- **Sensitive Operations**: 10 requests per hour (user creation, password changes)
+- **Configurable**: All limits can be adjusted via environment variables
+- **Development Override**: Can be disabled via `DISABLE_RATE_LIMITING=true` for development
+
+Rate limits return HTTP 429 (Too Many Requests) with `Retry-After` headers indicating when to retry.
+
+### File Upload Security
+
+The system uses magic number (file signature) validation to prevent MIME type spoofing:
+
+- **Validation**: File types are verified using file signatures, not just extensions or MIME types
+- **Supported Types**: JPEG, PNG, GIF, WebP
+- **Automatic Rejection**: Invalid files are automatically deleted before storage
+- **Security**: Prevents malicious files disguised as images from being uploaded
+
+### Structured Logging
+
+Production-ready logging system using Winston:
+
+- **Log Levels**: Error, Warn, Info, Debug (environment-aware)
+- **Daily Rotation**: Logs are automatically rotated daily and compressed
+- **Sensitive Data Sanitization**: Passwords, tokens, and sensitive fields are automatically redacted
+- **Multiple Outputs**: Console (development) and file (production)
+- **30-Day Retention**: Error and combined logs retained for 30 days
+
+### Standardized Error Handling
+
+Consistent error responses across the API:
+
+- **Custom Error Classes**: `ValidationError`, `AuthenticationError`, `NotFoundError`, etc.
+- **Structured Responses**: All errors return consistent JSON format with error codes
+- **Stack Traces**: Hidden in production, visible in development
+- **Global Handler**: Centralized error handling middleware
+
+### License System
+
+Advanced license management with cryptographic security:
+
+- **Signed Tokens**: HMAC-SHA256 signed license tokens (JWT-style)
+- **Offline Validation**: Tokens can be validated without database access
+- **Multi-Tenant Support**: Company-specific licenses with `company_id` tracking
+- **Tier Management**: Small, Medium, Large, Enterprise tiers
+- **Feature Flags**: Per-license feature toggles via JSONB `features` field
+- **Revocation**: Support for license revocation with reason tracking
+- **Expiry Tracking**: Automatic expiry date management with warnings
+
+For detailed license usage, see [LICENSE_USAGE_GUIDE.md](./LICENSE_USAGE_GUIDE.md).
+
+### Redis Requirement (Production)
+
+In production environments, Redis is mandatory:
+
+- **Session Storage**: Required for single-device-per-session enforcement
+- **Token Management**: JWT token validation and revocation
+- **Server Exit**: Server will exit on startup if Redis is unavailable in production
+- **Development**: Optional in development (fallback to memory store)
+
+Configure via:
+```
+REDIS_ENABLED=true
+REDIS_URL=redis://localhost:6379
+```
 
 ## License
 

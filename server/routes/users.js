@@ -30,29 +30,164 @@ module.exports = (pool) => {
     }
   };
 
-  // Get all users (admin only)
+  // Get all available RBAC roles
+  router.get('/roles', requireAdmin, async (req, res) => {
+    try {
+      // Check if current user is system_owner
+      const isSystemOwner = req.session.roles?.includes('system_owner') || 
+                           req.session.role === 'system_owner' ||
+                           req.session.roles?.includes('super_admin') ||
+                           req.session.role === 'super_admin';
+      
+      // Check if RBAC tables exist
+      const rbacCheck = await pool.query(`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' AND table_name = 'roles'
+      `);
+      
+      if (rbacCheck.rows.length > 0) {
+        // Get roles from RBAC system
+        let query = `
+          SELECT role_code, role_name, description 
+          FROM roles 
+        `;
+        
+        // Filter out system_owner if user is not system_owner
+        if (!isSystemOwner) {
+          query += ` WHERE role_code != 'system_owner' `;
+        }
+        
+        query += ` ORDER BY 
+            CASE role_code
+              WHEN 'system_owner' THEN 1
+              WHEN 'operations_admin' THEN 2
+              WHEN 'supervisor' THEN 3
+              WHEN 'technician' THEN 4
+              WHEN 'general_worker' THEN 5
+              WHEN 'inventory_controller' THEN 6
+              ELSE 7
+            END
+        `;
+        
+        const result = await pool.query(query);
+        res.json(result.rows);
+      } else {
+        // Fallback to legacy roles
+        res.json([
+          { role_code: 'technician', role_name: 'Technician', description: 'Technical operations role' },
+          { role_code: 'supervisor', role_name: 'Supervisor', description: 'Oversees work execution' },
+          { role_code: 'admin', role_name: 'Administrator', description: 'Administrative access' },
+          { role_code: 'super_admin', role_name: 'Super Admin', description: 'Full system access' }
+        ]);
+      }
+    } catch (error) {
+      console.error('Error fetching roles:', error);
+      res.status(500).json({ error: 'Failed to fetch roles' });
+    }
+  });
+
+  // Get all users (admin only) - includes RBAC roles from user_roles table
   router.get('/', requireAdmin, async (req, res) => {
     try {
+      // Check if current user is system_owner
+      const isSystemOwner = req.session.roles?.includes('system_owner') || 
+                           req.session.role === 'system_owner' ||
+                           req.session.roles?.includes('super_admin') ||
+                           req.session.role === 'super_admin';
+      
+      // Check if RBAC tables exist
+      const rbacCheck = await pool.query(`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' AND table_name = 'user_roles'
+      `);
+      
+      const hasRBAC = rbacCheck.rows.length > 0;
       const hasRolesColumn = await checkRolesColumn();
 
       let query;
-      if (hasRolesColumn) {
-        query = `SELECT id, username, email, full_name, role,
-                        COALESCE(roles, jsonb_build_array(role)) as roles,
-                        profile_image, is_active, created_at, last_login 
-                 FROM users 
-                 ORDER BY created_at DESC`;
+      if (hasRBAC) {
+        // Use RBAC system - get roles from user_roles table
+        // If not system_owner, exclude users with system_owner role
+        if (isSystemOwner) {
+          query = `
+            SELECT 
+              u.id, u.username, u.email, u.full_name, u.role,
+              COALESCE(
+                (SELECT jsonb_agg(r.role_code ORDER BY r.role_code)
+                 FROM user_roles ur
+                 JOIN roles r ON ur.role_id = r.id
+                 WHERE ur.user_id = u.id),
+                COALESCE(u.roles, jsonb_build_array(u.role), '["technician"]'::jsonb)
+              ) as roles,
+              u.profile_image, u.is_active, u.created_at, u.last_login
+            FROM users u
+            ORDER BY u.created_at DESC
+          `;
+        } else {
+          // Operations Administrator: Exclude users with system_owner role
+          query = `
+            SELECT 
+              u.id, u.username, u.email, u.full_name, u.role,
+              COALESCE(
+                (SELECT jsonb_agg(r.role_code ORDER BY r.role_code)
+                 FROM user_roles ur
+                 JOIN roles r ON ur.role_id = r.id
+                 WHERE ur.user_id = u.id),
+                COALESCE(u.roles, jsonb_build_array(u.role), '["technician"]'::jsonb)
+              ) as roles,
+              u.profile_image, u.is_active, u.created_at, u.last_login
+            FROM users u
+            WHERE u.id NOT IN (
+              SELECT DISTINCT ur.user_id
+              FROM user_roles ur
+              JOIN roles r ON ur.role_id = r.id
+              WHERE r.role_code = 'system_owner'
+            )
+            AND (u.role != 'system_owner' AND u.role != 'super_admin')
+            ORDER BY u.created_at DESC
+          `;
+        }
+      } else if (hasRolesColumn) {
+        if (isSystemOwner) {
+          query = `SELECT id, username, email, full_name, role,
+                          COALESCE(roles, jsonb_build_array(role)) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   ORDER BY created_at DESC`;
+        } else {
+          // Operations Administrator: Exclude users with system_owner role
+          query = `SELECT id, username, email, full_name, role,
+                          COALESCE(roles, jsonb_build_array(role)) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   WHERE role != 'system_owner' 
+                     AND role != 'super_admin'
+                     AND (roles IS NULL OR roles::text NOT LIKE '%system_owner%' AND roles::text NOT LIKE '%super_admin%')
+                   ORDER BY created_at DESC`;
+        }
       } else {
-        query = `SELECT id, username, email, full_name, role,
-                        jsonb_build_array(role) as roles,
-                        profile_image, is_active, created_at, last_login 
-                 FROM users 
-                 ORDER BY created_at DESC`;
+        if (isSystemOwner) {
+          query = `SELECT id, username, email, full_name, role,
+                          jsonb_build_array(role) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   ORDER BY created_at DESC`;
+        } else {
+          // Operations Administrator: Exclude users with system_owner role
+          query = `SELECT id, username, email, full_name, role,
+                          jsonb_build_array(role) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   WHERE role != 'system_owner' AND role != 'super_admin'
+                   ORDER BY created_at DESC`;
+        }
       }
 
       const result = await pool.query(query);
       
-      // Parse roles for each user
+      // Parse roles for each user and map legacy roles to RBAC roles
       const users = result.rows.map(user => {
         if (user.roles && typeof user.roles === 'string') {
           try {
@@ -63,8 +198,27 @@ module.exports = (pool) => {
         } else if (!user.roles) {
           user.roles = [user.role || 'technician'];
         }
+        
+        // Map legacy roles to RBAC roles
+        const roleMapping = {
+          'super_admin': 'system_owner',
+          'admin': 'operations_admin',
+          'supervisor': 'supervisor',
+          'technician': 'technician'
+        };
+        
+        user.roles = user.roles.map(r => roleMapping[r] || r);
+        if (user.role && roleMapping[user.role]) {
+          user.role = roleMapping[user.role];
+        }
+        
+        // Additional filter: Remove any users that have system_owner role (safety check)
+        if (!isSystemOwner && (user.roles.includes('system_owner') || user.role === 'system_owner')) {
+          return null; // Filter out in next step
+        }
+        
         return user;
-      });
+      }).filter(user => user !== null); // Remove null entries
       
       res.json(users);
     } catch (error) {
@@ -76,21 +230,97 @@ module.exports = (pool) => {
   // Get user by ID
   router.get('/:id', requireAdmin, async (req, res) => {
     try {
+      // Check if current user is system_owner
+      const isSystemOwner = req.session.roles?.includes('system_owner') || 
+                           req.session.role === 'system_owner' ||
+                           req.session.roles?.includes('super_admin') ||
+                           req.session.role === 'super_admin';
+      
+      // Check if RBAC tables exist
+      const rbacCheck = await pool.query(`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' AND table_name = 'user_roles'
+      `);
+      
+      const hasRBAC = rbacCheck.rows.length > 0;
       const hasRolesColumn = await checkRolesColumn();
 
       let query;
-      if (hasRolesColumn) {
-        query = `SELECT id, username, email, full_name, role,
-                        COALESCE(roles, jsonb_build_array(role)) as roles,
-                        profile_image, is_active, created_at, last_login 
-                 FROM users 
-                 WHERE id = $1`;
+      if (hasRBAC) {
+        // Check if the requested user has system_owner role
+        if (!isSystemOwner) {
+          // Operations Administrator: Check if user has system_owner role
+          const roleCheck = await pool.query(`
+            SELECT COUNT(*) as count
+            FROM user_roles ur
+            JOIN roles r ON ur.role_id = r.id
+            WHERE ur.user_id = $1 AND r.role_code = 'system_owner'
+          `, [req.params.id]);
+          
+          if (roleCheck.rows[0].count > 0) {
+            return res.status(403).json({ error: 'Access denied. Cannot view system owner information.' });
+          }
+          
+          query = `SELECT u.id, u.username, u.email, u.full_name, u.role,
+                          COALESCE(
+                            (SELECT jsonb_agg(r.role_code ORDER BY r.role_code)
+                             FROM user_roles ur
+                             JOIN roles r ON ur.role_id = r.id
+                             WHERE ur.user_id = u.id),
+                            COALESCE(u.roles, jsonb_build_array(u.role), '["technician"]'::jsonb)
+                          ) as roles,
+                          u.profile_image, u.is_active, u.created_at, u.last_login 
+                   FROM users u
+                   WHERE u.id = $1 
+                     AND u.role != 'system_owner' 
+                     AND u.role != 'super_admin'`;
+        } else {
+          query = `SELECT u.id, u.username, u.email, u.full_name, u.role,
+                          COALESCE(
+                            (SELECT jsonb_agg(r.role_code ORDER BY r.role_code)
+                             FROM user_roles ur
+                             JOIN roles r ON ur.role_id = r.id
+                             WHERE ur.user_id = u.id),
+                            COALESCE(u.roles, jsonb_build_array(u.role), '["technician"]'::jsonb)
+                          ) as roles,
+                          u.profile_image, u.is_active, u.created_at, u.last_login 
+                   FROM users u
+                   WHERE u.id = $1`;
+        }
+      } else if (hasRolesColumn) {
+        if (!isSystemOwner) {
+          query = `SELECT id, username, email, full_name, role,
+                          COALESCE(roles, jsonb_build_array(role)) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   WHERE id = $1 
+                     AND role != 'system_owner' 
+                     AND role != 'super_admin'
+                     AND (roles IS NULL OR roles::text NOT LIKE '%system_owner%' AND roles::text NOT LIKE '%super_admin%')`;
+        } else {
+          query = `SELECT id, username, email, full_name, role,
+                          COALESCE(roles, jsonb_build_array(role)) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   WHERE id = $1`;
+        }
       } else {
-        query = `SELECT id, username, email, full_name, role,
-                        jsonb_build_array(role) as roles,
-                        profile_image, is_active, created_at, last_login 
-                 FROM users 
-                 WHERE id = $1`;
+        if (!isSystemOwner) {
+          query = `SELECT id, username, email, full_name, role,
+                          jsonb_build_array(role) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   WHERE id = $1 
+                     AND role != 'system_owner' 
+                     AND role != 'super_admin'`;
+        } else {
+          query = `SELECT id, username, email, full_name, role,
+                          jsonb_build_array(role) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   WHERE id = $1`;
+        }
       }
 
       const result = await pool.query(query, [req.params.id]);
@@ -108,6 +338,24 @@ module.exports = (pool) => {
         }
       } else if (!user.roles) {
         user.roles = [user.role || 'technician'];
+      }
+      
+      // Map legacy roles to RBAC roles
+      const roleMapping = {
+        'super_admin': 'system_owner',
+        'admin': 'operations_admin',
+        'supervisor': 'supervisor',
+        'technician': 'technician'
+      };
+      
+      user.roles = user.roles.map(r => roleMapping[r] || r);
+      if (user.role && roleMapping[user.role]) {
+        user.role = roleMapping[user.role];
+      }
+      
+      // Additional safety check: Operations Administrators cannot view system_owner
+      if (!isSystemOwner && (user.roles.includes('system_owner') || user.role === 'system_owner')) {
+        return res.status(403).json({ error: 'Access denied. Cannot view system owner information.' });
       }
       
       res.json(user);
@@ -144,14 +392,48 @@ module.exports = (pool) => {
         userRoles = [role];
       }
 
-      // Validate roles
-      const validRoles = ['technician', 'supervisor', 'admin', 'super_admin'];
+      // Validate roles - support both legacy and RBAC roles
+      const validRoles = [
+        // Legacy roles
+        'technician', 'supervisor', 'admin', 'super_admin',
+        // RBAC roles
+        'system_owner', 'operations_admin', 'supervisor', 'technician', 'general_worker', 'inventory_controller'
+      ];
       const invalidRoles = userRoles.filter(r => !validRoles.includes(r));
       if (invalidRoles.length > 0) {
         return res.status(400).json({ 
           error: `Invalid roles: ${invalidRoles.join(', ')}. Valid roles: ${validRoles.join(', ')}` 
         });
       }
+      
+      // Map legacy roles to RBAC roles
+      const roleMapping = {
+        'super_admin': 'system_owner',
+        'admin': 'operations_admin',
+        'supervisor': 'supervisor',
+        'technician': 'technician'
+      };
+      
+      const mappedRoles = userRoles.map(r => roleMapping[r] || r);
+      
+      // Only system_owner can assign system_owner role
+      const isSystemOwner = req.session.roles?.includes('system_owner') || 
+                           req.session.role === 'system_owner' ||
+                           req.session.roles?.includes('super_admin') ||
+                           req.session.role === 'super_admin';
+      
+      if (mappedRoles.includes('system_owner') && !isSystemOwner) {
+        return res.status(403).json({ error: 'Only system owner can assign system_owner role' });
+      }
+      
+      // Check if RBAC tables exist
+      const rbacCheck = await pool.query(`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' AND table_name = 'user_roles'
+      `);
+      
+      const hasRBAC = rbacCheck.rows.length > 0;
 
       // Hash password (use default if not provided)
       const saltRounds = 10;
@@ -161,15 +443,32 @@ module.exports = (pool) => {
       // Insert user with password and roles
       // Store roles as JSONB array, and set primary role (first role) for backward compatibility
       // Set password_changed to false if using default password
-      const primaryRole = userRoles[0] || 'technician';
+      const primaryRole = mappedRoles[0] || 'technician';
       const result = await pool.query(
         `INSERT INTO users (username, email, full_name, role, roles, password_hash, is_active, password_changed) 
          VALUES ($1, $2, $3, $4, $5::jsonb, $6, true, $7) 
          RETURNING id, username, email, full_name, role, roles, is_active, password_changed, created_at`,
-        [username, email, full_name, primaryRole, JSON.stringify(userRoles), passwordHash, !useDefaultPassword]
+        [username, email, full_name, primaryRole, JSON.stringify(mappedRoles), passwordHash, !useDefaultPassword]
       );
 
       const user = result.rows[0];
+      
+      // Assign roles in user_roles table if RBAC exists
+      if (hasRBAC) {
+        for (const roleCode of mappedRoles) {
+          const roleResult = await pool.query('SELECT id FROM roles WHERE role_code = $1', [roleCode]);
+          if (roleResult.rows.length > 0) {
+            const roleId = roleResult.rows[0].id;
+            await pool.query(
+              `INSERT INTO user_roles (user_id, role_id, assigned_at, assigned_by)
+               VALUES ($1, $2, CURRENT_TIMESTAMP, $3)
+               ON CONFLICT (user_id, role_id) DO NOTHING`,
+              [user.id, roleId, req.session.userId]
+            );
+          }
+        }
+      }
+      
       // Parse roles JSONB for response
       if (user.roles && typeof user.roles === 'string') {
         try {
@@ -177,6 +476,8 @@ module.exports = (pool) => {
         } catch (e) {
           user.roles = [user.role];
         }
+      } else {
+        user.roles = mappedRoles;
       }
 
       res.status(201).json({
@@ -209,8 +510,13 @@ module.exports = (pool) => {
           return res.status(400).json({ error: 'Roles must be a non-empty array' });
         }
 
-        // Validate roles
-        const validRoles = ['technician', 'supervisor', 'admin', 'super_admin'];
+        // Validate roles - support both legacy and RBAC roles
+        const validRoles = [
+          // Legacy roles
+          'technician', 'supervisor', 'admin', 'super_admin',
+          // RBAC roles
+          'system_owner', 'operations_admin', 'supervisor', 'technician', 'general_worker', 'inventory_controller'
+        ];
         const invalidRoles = roles.filter(r => !validRoles.includes(r));
         if (invalidRoles.length > 0) {
           return res.status(400).json({ 
@@ -218,9 +524,49 @@ module.exports = (pool) => {
           });
         }
 
-        // Only super_admin can assign super_admin role
-        if (roles.includes('super_admin') && !isRequestingSuperAdmin) {
-          return res.status(403).json({ error: 'Only super admin can assign super_admin role' });
+        // Map legacy roles to RBAC roles
+        const roleMapping = {
+          'super_admin': 'system_owner',
+          'admin': 'operations_admin',
+          'supervisor': 'supervisor',
+          'technician': 'technician'
+        };
+        const mappedRoles = roles.map(r => roleMapping[r] || r);
+        
+        // Only system_owner can assign system_owner role
+        const isSystemOwner = req.session.roles?.includes('system_owner') || 
+                             req.session.role === 'system_owner' ||
+                             req.session.roles?.includes('super_admin') ||
+                             req.session.role === 'super_admin';
+        
+        if (mappedRoles.includes('system_owner') && !isSystemOwner) {
+          return res.status(403).json({ error: 'Only system owner can assign system_owner role' });
+        }
+        
+        // Check if RBAC tables exist and update user_roles
+        const rbacCheck = await pool.query(`
+          SELECT table_name 
+          FROM information_schema.tables 
+          WHERE table_schema = 'public' AND table_name = 'user_roles'
+        `);
+        
+        if (rbacCheck.rows.length > 0) {
+          // Delete existing roles
+          await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
+          
+          // Insert new roles
+          for (const roleCode of mappedRoles) {
+            const roleResult = await pool.query('SELECT id FROM roles WHERE role_code = $1', [roleCode]);
+            if (roleResult.rows.length > 0) {
+              const roleId = roleResult.rows[0].id;
+              await pool.query(
+                `INSERT INTO user_roles (user_id, role_id, assigned_at, assigned_by)
+                 VALUES ($1, $2, CURRENT_TIMESTAMP, $3)
+                 ON CONFLICT (user_id, role_id) DO NOTHING`,
+                [id, roleId, req.session.userId]
+              );
+            }
+          }
         }
 
         userRoles = roles;
