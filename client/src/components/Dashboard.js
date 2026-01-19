@@ -427,161 +427,166 @@ function Dashboard() {
 
       {/* Main Dashboard Grid */}
       <div className="dashboard-grid">
-        {/* PM Completion Rate */}
-        <Link to="/tasks" className="dashboard-card">
-          <div className="card-header">
-            <h3>PM Completion Rate</h3>
-            <select 
-              className="period-dropdown"
-              value={pmPeriod}
-              onChange={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setPmPeriod(e.target.value);
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-            </select>
-          </div>
-          <div className="pm-chart-container">
-            <div className="pm-chart-wrapper">
-              <Doughnut
-                data={getPMChartData()}
-                options={{
-                  ...chartOptions,
-                  cutout: '65%',
+        {/* Row 1: Three cards side by side */}
+        <div className="dashboard-row">
+          {/* PM Completion Rate */}
+          <Link to="/tasks" className="dashboard-card">
+            <div className="card-header">
+              <h3>PM Completion Rate</h3>
+              <select 
+                className="period-dropdown"
+                value={pmPeriod}
+                onChange={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setPmPeriod(e.target.value);
                 }}
-              />
-              <div className="chart-center-text">
-                <div className="chart-percentage">
-                  {pmStats.total > 0 ? ((pmStats.completed / pmStats.total) * 100).toFixed(0) : 0}%
+                onClick={(e) => e.stopPropagation()}
+              >
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </div>
+            <div className="pm-chart-container">
+              <div className="pm-chart-wrapper">
+                <Doughnut
+                  data={getPMChartData()}
+                  options={{
+                    ...chartOptions,
+                    cutout: '65%',
+                  }}
+                />
+                <div className="chart-center-text">
+                  <div className="chart-percentage">
+                    {pmStats.total > 0 ? ((pmStats.completed / pmStats.total) * 100).toFixed(0) : 0}%
+                  </div>
+                  <div className="chart-label">Complete</div>
+                  <div className="chart-detail">
+                    {pmStats.completed} of {pmStats.total}
+                  </div>
                 </div>
-                <div className="chart-label">Complete</div>
-                <div className="chart-detail">
-                  {pmStats.completed} of {pmStats.total}
+              </div>
+              <div className="pm-stats-breakdown">
+                <div className="pm-stat-item">
+                  <div className="pm-stat-label">Completed</div>
+                  <div className="pm-stat-value compact">{pmStats.completed}</div>
+                  <div className="pm-stat-percentage">
+                    {pmStats.total > 0 ? ((pmStats.completed / pmStats.total) * 100).toFixed(0) : 0}%
+                  </div>
+                </div>
+                <div className="pm-stat-item">
+                  <div className="pm-stat-label">Remaining</div>
+                  <div className="pm-stat-value compact">{pmStats.total - pmStats.completed}</div>
+                  <div className="pm-stat-percentage">
+                    {pmStats.total > 0 ? (((pmStats.total - pmStats.completed) / pmStats.total) * 100).toFixed(0) : 0}%
+                  </div>
+                </div>
+                <div className="pm-stat-item">
+                  <div className="pm-stat-label">Total ({pmPeriod.charAt(0).toUpperCase() + pmPeriod.slice(1)})</div>
+                  <div className="pm-stat-value compact">{pmStats.total}</div>
                 </div>
               </div>
             </div>
-            <div className="pm-stats-breakdown">
-              <div className="pm-stat-item">
-                <div className="pm-stat-label">Completed</div>
-                <div className="pm-stat-value compact">{pmStats.completed}</div>
-                <div className="pm-stat-percentage">
-                  {pmStats.total > 0 ? ((pmStats.completed / pmStats.total) * 100).toFixed(0) : 0}%
-                </div>
-              </div>
-              <div className="pm-stat-item">
-                <div className="pm-stat-label">Remaining</div>
-                <div className="pm-stat-value compact">{pmStats.total - pmStats.completed}</div>
-                <div className="pm-stat-percentage">
-                  {pmStats.total > 0 ? (((pmStats.total - pmStats.completed) / pmStats.total) * 100).toFixed(0) : 0}%
-                </div>
-              </div>
-              <div className="pm-stat-item">
-                <div className="pm-stat-label">Total ({pmPeriod.charAt(0).toUpperCase() + pmPeriod.slice(1)})</div>
-                <div className="pm-stat-value compact">{pmStats.total}</div>
-              </div>
-            </div>
-          </div>
-        </Link>
+          </Link>
 
-        {/* Grass Cutting / Panel Wash Progress */}
-        <Link to="/plant" className="dashboard-card">
-          <div className="card-header">
-            <h3>Grass Cutting Progress</h3>
-            <select 
-              className="period-dropdown"
-              value={trackerViewMode}
-              onChange={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setTrackerViewMode(e.target.value);
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <option value="grass_cutting">Grass Cutting</option>
-              <option value="panel_wash">Panel Wash</option>
-            </select>
-          </div>
-          <div className="tracker-chart-container">
-            <div className="tracker-chart-wrapper">
-              <Doughnut
-                data={getTrackerChartData()}
-                options={{
-                  ...chartOptions,
-                  cutout: '65%',
+          {/* Grass Cutting / Panel Wash Progress */}
+          <Link to="/plant" className="dashboard-card">
+            <div className="card-header">
+              <h3>Grass Cutting Progress</h3>
+              <select 
+                className="period-dropdown"
+                value={trackerViewMode}
+                onChange={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setTrackerViewMode(e.target.value);
                 }}
-              />
-              <div className="chart-center-text">
-                <div className="chart-percentage">
-                  {(trackerViewMode === 'grass_cutting' ? grassCuttingProgress : panelWashProgress).toFixed(0)}%
+                onClick={(e) => e.stopPropagation()}
+              >
+                <option value="grass_cutting">Grass Cutting</option>
+                <option value="panel_wash">Panel Wash</option>
+              </select>
+            </div>
+            <div className="tracker-chart-container">
+              <div className="tracker-chart-wrapper">
+                <Doughnut
+                  data={getTrackerChartData()}
+                  options={{
+                    ...chartOptions,
+                    cutout: '65%',
+                  }}
+                />
+                <div className="chart-center-text">
+                  <div className="chart-percentage">
+                    {(trackerViewMode === 'grass_cutting' ? grassCuttingProgress : panelWashProgress).toFixed(0)}%
+                  </div>
+                  <div className="chart-label">Progress</div>
                 </div>
-                <div className="chart-label">Progress</div>
               </div>
             </div>
-          </div>
-        </Link>
+          </Link>
 
-        {/* Spares Inventory Status */}
-        <Link to="/inventory" className="dashboard-card">
-          <div className="card-header">
-            <h3>Spares Inventory Status</h3>
-          </div>
-          <div className="spares-chart-container">
-            <Bar
-              data={getInventoryChartData()}
-              options={barChartOptions}
-            />
-            <div className="inventory-summary">
-              <div className="inventory-summary-item">
-                <span className="summary-label">In Stock:</span>
-                <span className="summary-value">{inventoryStats.inStock}</span>
-              </div>
-              <div className="inventory-summary-item">
-                <span className="summary-label">Low Stock:</span>
-                <span className="summary-value warning">{inventoryStats.lowStock}</span>
-              </div>
-              <div className="inventory-summary-item">
-                <span className="summary-label">Out of Stock:</span>
-                <span className="summary-value error">{inventoryStats.outOfStock}</span>
+          {/* Today's Activities */}
+          <Link to="/calendar" className="dashboard-card daily-activities-card">
+            <div className="card-header">
+              <h3>Today's Activities</h3>
+            </div>
+            <div className="daily-activities-list">
+              {todayActivities.length === 0 ? (
+                <div className="no-activities">No activities scheduled for today</div>
+              ) : (
+                <ul>
+                  {todayActivities.map((activity, index) => (
+                    <li key={activity.id || index} className="activity-item">
+                      <div className="activity-title">{activity.title || activity.event_name || 'Untitled Event'}</div>
+                      {activity.description && (
+                        <div className="activity-description">{activity.description}</div>
+                      )}
+                      {activity.event_date && (
+                        <div className="activity-time">
+                          {new Date(activity.event_date).toLocaleTimeString('en-US', { 
+                            hour: '2-digit', 
+                            minute: '2-digit' 
+                          })}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </Link>
+        </div>
+
+        {/* Row 2: Spares Inventory Status below Today's Activities */}
+        <div className="dashboard-row-bottom">
+          <Link to="/inventory" className="dashboard-card spares-card">
+            <div className="card-header">
+              <h3>Spares Inventory Status</h3>
+            </div>
+            <div className="spares-chart-container">
+              <Bar
+                data={getInventoryChartData()}
+                options={barChartOptions}
+              />
+              <div className="inventory-summary">
+                <div className="inventory-summary-item">
+                  <span className="summary-label">In Stock:</span>
+                  <span className="summary-value">{inventoryStats.inStock}</span>
+                </div>
+                <div className="inventory-summary-item">
+                  <span className="summary-label">Low Stock:</span>
+                  <span className="summary-value warning">{inventoryStats.lowStock}</span>
+                </div>
+                <div className="inventory-summary-item">
+                  <span className="summary-label">Out of Stock:</span>
+                  <span className="summary-value error">{inventoryStats.outOfStock}</span>
+                </div>
               </div>
             </div>
-          </div>
-        </Link>
-
-        {/* Today's Activities */}
-        <Link to="/calendar" className="dashboard-card daily-activities-card">
-          <div className="card-header">
-            <h3>Today's Activities</h3>
-          </div>
-          <div className="daily-activities-list">
-            {todayActivities.length === 0 ? (
-              <div className="no-activities">No activities scheduled for today</div>
-            ) : (
-              <ul>
-                {todayActivities.map((activity, index) => (
-                  <li key={activity.id || index} className="activity-item">
-                    <div className="activity-title">{activity.title || activity.event_name || 'Untitled Event'}</div>
-                    {activity.description && (
-                      <div className="activity-description">{activity.description}</div>
-                    )}
-                    {activity.event_date && (
-                      <div className="activity-time">
-                        {new Date(activity.event_date).toLocaleTimeString('en-US', { 
-                          hour: '2-digit', 
-                          minute: '2-digit' 
-                        })}
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Link>
+          </Link>
+        </div>
       </div>
     </div>
   );

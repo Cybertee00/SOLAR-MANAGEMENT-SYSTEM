@@ -59,12 +59,24 @@
   line-height: 1.2;
 }
 
-/* Dashboard Grid - Equal Sized Cards */
+/* Dashboard Grid - Two Row Layout */
 .dashboard-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dashboard-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 24px;
   align-items: stretch;
+}
+
+.dashboard-row-bottom {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
 }
 
 .dashboard-card {
@@ -336,9 +348,20 @@
   font-weight: 500;
 }
 
+/* Spares Card in Bottom Row */
+.spares-card {
+  width: 100%;
+}
+
 /* Responsive Design */
+@media (max-width: 1024px) {
+  .dashboard-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 768px) {
-  .dashboard-grid {
+  .dashboard-row {
     grid-template-columns: 1fr;
   }
 
