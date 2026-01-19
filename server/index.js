@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Load logger and environment utilities FIRST (before other modules that might use console.log)
 const logger = require('./utils/logger');
-const { isProduction } = require('./utils/env');
+const { isProduction, isDevelopment } = require('./utils/env');
 const { validateEnvironment } = require('./utils/envValidator');
 
 // Validate environment variables at startup
@@ -353,7 +353,9 @@ app.use(session({
     secure: cookieSecure, // false for localhost (HTTP), true for HTTPS
     httpOnly: true, // Prevent XSS attacks
     sameSite: cookieSameSite, // 'none' for cross-origin (Dev Tunnels), 'lax' for same-origin (localhost)
-    maxAge: parseInt(process.env.SESSION_MAX_AGE_MS || '86400000', 10), // 24 hours default
+    maxAge: isDevelopment() 
+      ? parseInt(process.env.SESSION_MAX_AGE_MS || '604800000', 10) // 7 days in development
+      : parseInt(process.env.SESSION_MAX_AGE_MS || '86400000', 10), // 24 hours in production
     domain: undefined // Don't set domain to allow cross-subdomain cookies
   },
   // Use secure session store in production (Redis recommended)
@@ -392,18 +394,18 @@ app.use('/uploads', (req, res, next) => {
 }, express.static(path.join(__dirname, 'uploads')));
 
 // Rate limiting - Production-ready limits
-// Can be disabled via environment variable: DISABLE_RATE_LIMITING=true
+// Automatically disabled in development mode
 const { standardLimiter, authLimiter, sensitiveOperationLimiter } = require('./middleware/rateLimiter');
 
-if (process.env.DISABLE_RATE_LIMITING !== 'true') {
-  // Apply standard rate limiting to all API routes
+if (process.env.DISABLE_RATE_LIMITING !== 'true' && isProduction()) {
+  // Apply standard rate limiting to all API routes (only in production)
   app.use('/api', standardLimiter);
   logger.info('Rate limiting enabled', {
     standardLimit: process.env.RATE_LIMIT_MAX || '100 requests per 15 minutes',
     authLimit: process.env.AUTH_RATE_LIMIT_MAX || '5 requests per 15 minutes'
   });
 } else {
-  logger.warn('Rate limiting is DISABLED. This should only be used in development!');
+  logger.info('Rate limiting is DISABLED (development mode or DISABLE_RATE_LIMITING=true)');
 }
 
 // Database connection with connection pooling
@@ -492,8 +494,14 @@ const openapiSpec = swaggerJSDoc({
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
 // Authentication routes (no auth required)
-// Apply strict rate limiting to auth endpoints
-if (process.env.DISABLE_RATE_LIMITING !== 'true') {
+// Apply strict rate limiting to auth endpoints (only in production)
+if (process.env.DISABLE_RATE_LIMITING !== 'true' && isProduction()) {
+  const { authLimiter, loginSlowDown, accountLockoutMiddleware } = require('./middleware/rateLimiter');
+  // Apply progressive delays first (slows down repeated attempts)
+  app.use('/api/auth/login', loginSlowDown);
+  // Then apply account-based lockout check
+  app.use('/api/auth/login', accountLockoutMiddleware);
+  // Finally apply IP-based rate limiting
   app.use('/api/auth/login', authLimiter);
   app.use('/api/auth/change-password', sensitiveOperationLimiter);
 }
