@@ -4,6 +4,8 @@ const { Pool } = require('pg');
 const { validateLogin, validateChangePassword } = require('../middleware/inputValidation');
 const { generateToken } = require('../utils/jwt');
 const { storeToken, storeUserSession, getUserSession, deleteUserSession, deleteToken } = require('../utils/redis');
+const { recordFailedLoginAttempt, clearAccountLockout } = require('../middleware/rateLimiter');
+const { ValidationError, AuthenticationError } = require('../utils/errors');
 const logger = require('../utils/logger');
 const deleteRedisToken = deleteToken; // Alias for clarity
 
@@ -24,7 +26,7 @@ module.exports = (pool) => {
       logger.debug('Login attempt', { username, hasPassword: !!password });
 
       if (!username || !password) {
-        throw new BadRequestError('Username and password are required');
+        throw new ValidationError('Username and password are required');
       }
 
       // Find user by username
@@ -66,7 +68,9 @@ module.exports = (pool) => {
 
       if (userResult.rows.length === 0) {
         logger.warn('User not found for login attempt', { username });
-        throw new UnauthorizedError('Invalid username or password');
+        // Record failed attempt for account-based tracking
+        await recordFailedLoginAttempt(req);
+        throw new AuthenticationError('Invalid username or password');
       }
 
       const user = userResult.rows[0];
@@ -152,11 +156,16 @@ module.exports = (pool) => {
 
       if (!passwordMatch) {
         logger.warn('Password mismatch for login attempt', { username });
+        // Record failed attempt for account-based tracking
+        await recordFailedLoginAttempt(req);
         if (!res.headersSent) {
           return res.status(401).json({ error: 'Invalid username or password' });
         }
         return;
       }
+
+      // Password matched - clear any account lockout
+      await clearAccountLockout(req);
 
       // Check if user is using default password
       const DEFAULT_PASSWORD = 'witkop123';
@@ -259,13 +268,17 @@ module.exports = (pool) => {
         logger.debug('Session saved successfully');
 
         // Single-Device-Per-Session: Check for existing active session
-        const existingToken = await getUserSession(user.id);
-        if (existingToken) {
-          console.log(`[AUTH] User ${user.id} has existing session, invalidating old session`);
-          // Delete the old token from Redis
-          await deleteRedisToken(existingToken);
-          // Destroy the old session if it exists in the database
-          // Note: We can't destroy another session, but the token is now invalid
+        // Disabled in development to allow multiple devices/tabs
+        const { isDevelopment } = require('../utils/env');
+        if (!isDevelopment()) {
+          const existingToken = await getUserSession(user.id);
+          if (existingToken) {
+            console.log(`[AUTH] User ${user.id} has existing session, invalidating old session`);
+            // Delete the old token from Redis
+            await deleteRedisToken(existingToken);
+            // Destroy the old session if it exists in the database
+            // Note: We can't destroy another session, but the token is now invalid
+          }
         }
 
         // Generate JWT token
@@ -279,6 +292,8 @@ module.exports = (pool) => {
         });
 
         // Store JWT token in Redis (if available)
+        // Extended expiration in development
+        const tokenExpiration = isDevelopment() ? 604800 : 86400; // 7 days in dev, 24 hours in prod
         await storeToken(jwtToken, {
           userId: user.id,
           username: user.username,
@@ -286,10 +301,13 @@ module.exports = (pool) => {
           role: userRoles[0] || user.role,
           fullName: user.full_name,
           permissions: userPermissions
-        }, 86400); // 24 hours
+        }, tokenExpiration);
 
         // Store active session for user (single-device-per-session)
-        await storeUserSession(user.id, jwtToken, 86400); // 24 hours
+        // Only in production - disabled in development
+        if (!isDevelopment()) {
+          await storeUserSession(user.id, jwtToken, 86400); // 24 hours
+        }
 
         // Return user info (without password) with JWT token
         // Make sure we only send response once

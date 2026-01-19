@@ -11,7 +11,7 @@
   color: var(--md-text-dark);
 }
 
-/* Stat Cards - Compact Design */
+/* Stat Cards - Compact Design with Visual Engagement */
 .dashboard-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
@@ -26,12 +26,36 @@
   border-radius: 4px;
   text-decoration: none;
   color: inherit;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   min-width: 100px;
+  position: relative;
+  overflow: hidden;
+  border-top: 3px solid transparent;
+}
+
+/* Colored top border for each card type */
+.stat-card:nth-child(1) {
+  border-top-color: #ffc107;
+  background: linear-gradient(180deg, rgba(255, 193, 7, 0.08) 0%, transparent 100%);
+}
+
+.stat-card:nth-child(2) {
+  border-top-color: #17a2b8;
+  background: linear-gradient(180deg, rgba(23, 162, 184, 0.08) 0%, transparent 100%);
+}
+
+.stat-card:nth-child(3) {
+  border-top-color: #28a745;
+  background: linear-gradient(180deg, rgba(40, 167, 69, 0.08) 0%, transparent 100%);
+}
+
+.stat-card:nth-child(4) {
+  border-top-color: #dc3545;
+  background: linear-gradient(180deg, rgba(220, 53, 69, 0.08) 0%, transparent 100%);
 }
 
 .stat-card:hover {
@@ -41,9 +65,26 @@
   color: inherit;
 }
 
+/* Enhanced hover glow effect per card */
+.stat-card:nth-child(1):hover {
+  box-shadow: 0 4px 12px rgba(255, 193, 7, 0.25);
+}
+
+.stat-card:nth-child(2):hover {
+  box-shadow: 0 4px 12px rgba(23, 162, 184, 0.25);
+}
+
+.stat-card:nth-child(3):hover {
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.25);
+}
+
+.stat-card:nth-child(4):hover {
+  box-shadow: 0 4px 12px rgba(220, 53, 69, 0.25);
+}
+
 .stat-card h3 {
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 600;
   margin: 0 0 2px 0;
   text-align: center;
   color: var(--md-text-main);
@@ -57,9 +98,10 @@
   margin: 1px 0 0 0;
   text-align: center;
   line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
-/* Dashboard Grid - Two Row Layout */
+/* Dashboard Grid - 2x2 Layout */
 .dashboard-grid {
   display: flex;
   flex-direction: column;
@@ -68,21 +110,16 @@
 
 .dashboard-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 24px;
   align-items: stretch;
-}
-
-.dashboard-row-bottom {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 24px;
 }
 
 .dashboard-card {
   background: var(--md-white);
   border-radius: var(--md-radius-lg);
   padding: 20px;
+  padding-bottom: 16px;
   box-shadow: var(--md-shadow-md);
   border: 1px solid var(--md-border);
   text-decoration: none;
@@ -91,6 +128,7 @@
   display: flex;
   flex-direction: column;
   min-height: 350px;
+  position: relative;
 }
 
 .dashboard-card:hover {
@@ -115,6 +153,44 @@
   font-size: 1.25rem;
   font-weight: 600;
   color: var(--md-text-dark);
+}
+
+/* Card Footer with View Button */
+.card-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.view-button {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--md-info);
+  text-decoration: none;
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--md-info);
+  background: transparent;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  display: inline-block;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.view-button:hover {
+  background: var(--md-info);
+  color: var(--md-white);
+  text-decoration: none;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(26, 115, 232, 0.2);
+}
+
+.view-button:active {
+  transform: translateY(0);
 }
 
 .period-dropdown {
@@ -249,39 +325,56 @@
   min-height: 280px;
 }
 
-/* Spares Inventory Status */
-.spares-chart-container {
-  min-height: 280px;
+.tracker-chart-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  margin: 0 auto;
+}
+
+/* Spares Inventory Status - Numbers Only */
+.spares-numbers-container {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  justify-content: center;
+  align-items: center;
+  min-height: 280px;
+  padding: 20px;
 }
 
 .inventory-summary {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 8px;
   margin-top: 12px;
+  justify-content: space-between;
 }
 
 .inventory-summary-item {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
   padding: 8px 12px;
   background: #f8f9fa;
   border-radius: 6px;
   font-size: 14px;
+  flex: 1;
+  min-width: 0;
 }
 
 .summary-label {
   font-weight: 500;
   color: var(--md-text-dark);
+  font-size: 12px;
+  margin-bottom: 4px;
+  text-align: center;
 }
 
 .summary-value {
   font-weight: 700;
   color: #4CAF50;
+  font-size: 18px;
+  text-align: center;
 }
 
 .summary-value.warning {
@@ -300,6 +393,7 @@
 .daily-activities-list {
   flex: 1;
   overflow-y: auto;
+  margin-bottom: 0;
 }
 
 .no-activities {
@@ -307,6 +401,7 @@
   color: var(--md-text-main);
   font-size: 14px;
   padding: 20px;
+  line-height: 1.4;
 }
 
 .daily-activities-list ul {
@@ -320,7 +415,7 @@
   margin-bottom: 8px;
   background: #f8f9fa;
   border-radius: 6px;
-  border-left: 3px solid var(--md-info);
+  border-left: 4px solid var(--md-info);
   transition: background 0.2s ease;
 }
 
@@ -333,17 +428,18 @@
   color: var(--md-text-dark);
   font-size: 14px;
   margin-bottom: 4px;
+  line-height: 1.4;
 }
 
 .activity-description {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--md-text-main);
   margin-bottom: 4px;
   line-height: 1.4;
 }
 
 .activity-time {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--md-text-main);
   font-weight: 500;
 }
@@ -357,6 +453,11 @@
 @media (max-width: 1024px) {
   .dashboard-row {
     grid-template-columns: 1fr;
+  }
+  
+  .spares-numbers-container {
+    min-height: auto;
+    padding: 16px;
   }
 }
 

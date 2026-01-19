@@ -3,6 +3,7 @@ import { getUsers, createUser, updateUser, deactivateUser, deleteUser, getRoles 
 import { useAuth } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { getApiBaseUrl } from '../api/api';
+import { getErrorMessage } from '../utils/errorHandler';
 import './UserManagement.css';
 
 function UserManagement() {
@@ -80,7 +81,7 @@ function UserManagement() {
       const response = await getUsers();
       setUsers(response.data);
     } catch (error) {
-      setError('Failed to load users: ' + (error.response?.data?.error || error.message));
+      setError('Failed to load users: ' + getErrorMessage(error));
     } finally {
       setLoading(false);
     }

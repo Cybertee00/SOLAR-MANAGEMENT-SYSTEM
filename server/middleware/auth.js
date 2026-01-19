@@ -65,12 +65,18 @@ async function requireAuth(req, res, next) {
         }
         
         // Single-Device-Per-Session: Verify this is the active session for the user
-        const isActive = await isActiveSession(decoded.userId, token);
-        if (!isActive) {
-          return res.status(401).json({ 
-            error: 'Session expired', 
-            message: 'You have logged in from another device. Please log in again.'
-          });
+        // Disabled in development to allow multiple devices/tabs
+        const { isDevelopment } = require('../utils/env');
+        if (isDevelopment()) {
+          // Skip single-device check in development
+        } else {
+          const isActive = await isActiveSession(decoded.userId, token);
+          if (!isActive) {
+            return res.status(401).json({ 
+              error: 'Session expired', 
+              message: 'You have logged in from another device. Please log in again.'
+            });
+          }
         }
         
         // Populate session-like context from token data

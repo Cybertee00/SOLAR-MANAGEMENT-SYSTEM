@@ -1,387 +1,618 @@
-.notifications-container {
-  max-width: 1000px;
-  margin: 0 auto;
-  padding: 20px;
+/* Outlook-Style Notifications Container */
+.notifications-container-outlook {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 120px);
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  background: #faf9f8;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
-.notifications-header {
+/* Toolbar (Outlook-style header) */
+.notifications-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-  gap: 15px;
+  padding: 12px 20px;
+  background: #ffffff;
+  border-bottom: 1px solid #edebe9;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
-.notifications-header h1 {
-  margin: 0;
-  color: #333;
-}
-
-.notifications-actions {
+.toolbar-left {
   display: flex;
-  gap: 15px;
   align-items: center;
+  gap: 16px;
 }
 
-.filter-toggle {
+.notifications-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #323130;
+}
+
+.unread-badge {
+  background: #0078d4;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #f3f2f1;
+  border-radius: 4px;
+  padding: 6px 12px;
+  min-width: 300px;
+  transition: background 0.2s;
+}
+
+.search-box:focus-within {
+  background: #ffffff;
+  box-shadow: 0 0 0 1px #0078d4;
+}
+
+.search-icon {
+  color: #605e5c;
+  margin-right: 8px;
+  font-size: 14px;
+}
+
+.search-input {
+  border: none;
+  background: transparent;
+  outline: none;
+  flex: 1;
+  font-size: 14px;
+  color: #323130;
+  font-family: inherit;
+}
+
+.search-input::placeholder {
+  color: #a19f9d;
+}
+
+.btn-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  background: #0078d4;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-toolbar:hover {
+  background: #106ebe;
+}
+
+/* Filters (Outlook-style tabs) */
+.notifications-filters-outlook {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+  background: #ffffff;
+  border-bottom: 1px solid #edebe9;
+}
+
+.filter-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.filter-tab {
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #605e5c;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.filter-tab:hover {
+  color: #323130;
+  background: #f3f2f1;
+}
+
+.filter-tab.active {
+  color: #0078d4;
+  border-bottom-color: #0078d4;
+  background: transparent;
+}
+
+.filter-toggle-outlook {
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
   font-size: 14px;
-  color: #666;
+  color: #605e5c;
+  user-select: none;
 }
 
-.filter-toggle input[type="checkbox"] {
+.filter-toggle-outlook input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
   cursor: pointer;
-  width: 18px;
-  height: 18px;
 }
 
-/* Category Filter */
-.notifications-filters {
-  margin-bottom: 20px;
-  padding: 12px 16px;
-  background: #f8f9fa;
-  border-radius: 8px;
-  border: 1px solid #dee2e6;
-}
-
-.filter-group {
+/* Main Content Area (Outlook-style split view) */
+.notifications-content-outlook {
   display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.filter-label {
-  font-weight: 500;
-  color: #495057;
-  font-size: 14px;
-}
-
-.category-filter {
-  padding: 6px 12px;
-  border: 1px solid #ced4da;
-  border-radius: 6px;
-  font-size: 14px;
-  background: white;
-  color: #495057;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.category-filter:hover {
-  border-color: #007bff;
-}
-
-.category-filter:focus {
-  outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
-}
-
-.unread-badge-header {
-  margin-bottom: 15px;
-  padding: 10px 15px;
-  background: #fff3cd;
-  border-left: 4px solid #ffc107;
-  border-radius: 4px;
-}
-
-.unread-count-badge {
-  font-weight: bold;
-  color: #856404;
-}
-
-.no-notifications {
-  text-align: center;
-  padding: 60px 20px;
-  color: #666;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.no-notifications p {
-  margin: 0;
-  font-size: 16px;
-}
-
-/* Date Grouping */
-.notification-date-group {
-  margin-bottom: 30px;
-}
-
-.notification-date-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  background: #f8f9fa;
-  border-radius: 6px;
-  font-weight: 600;
-  color: #495057;
-  font-size: 14px;
-}
-
-.date-label {
   flex: 1;
+  overflow: hidden;
+  background: #ffffff;
 }
 
-.date-count {
-  color: #6c757d;
+/* Notifications List (Left Pane) */
+.notifications-list-outlook {
+  flex: 1;
+  overflow-y: auto;
+  border-right: 1px solid #edebe9;
+  background: #ffffff;
+}
+
+.notification-date-group-outlook {
+  margin-bottom: 0;
+}
+
+.notification-date-header-outlook {
+  padding: 12px 20px;
+  background: #faf9f8;
+  border-bottom: 1px solid #edebe9;
+  font-size: 13px;
+  font-weight: 600;
+  color: #323130;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.date-label-outlook {
+  color: #323130;
+}
+
+.date-count-outlook {
+  color: #605e5c;
   font-weight: 400;
   font-size: 12px;
 }
 
-.notifications-list {
+/* Notification Item (Outlook email-style) */
+.notification-item-outlook {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
   gap: 12px;
-}
-
-.notification-item {
-  display: flex;
-  gap: 15px;
-  padding: 15px;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  transition: all 0.2s ease;
-  position: relative;
+  padding: 12px 20px;
+  border-bottom: 1px solid #edebe9;
   cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+  background: #ffffff;
 }
 
-.notification-item:hover {
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  transform: translateY(-2px);
-  border-color: #007bff;
+.notification-item-outlook:hover {
+  background: #f3f2f1;
 }
 
-.notification-item:active {
-  transform: translateY(0);
-}
-
-.notification-item.unread {
-  background: #f0f8ff;
-  border-left: 4px solid #007bff;
+.notification-item-outlook.unread {
+  background: #faf9f8;
   font-weight: 500;
 }
 
-.notification-item.unread:hover {
-  background: #e3f2fd;
+.notification-item-outlook.unread:hover {
+  background: #f3f2f1;
 }
 
-.notification-item.notification-assigned {
-  border-left-color: #007bff;
+.notification-item-outlook.selected {
+  background: #e1dfdd;
+  border-left: 3px solid #0078d4;
 }
 
-.notification-item.notification-reminder {
-  border-left-color: #ffc107;
+.notification-checkbox-wrapper {
+  flex-shrink: 0;
+  padding-top: 2px;
 }
 
-.notification-item.notification-flagged {
-  border-left-color: #dc3545;
-  background: #fff3cd;
+.notification-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  margin: 0;
 }
 
-.notification-item.notification-approved {
-  border-left-color: #28a745;
-}
-
-.notification-item.notification-rejected {
-  border-left-color: #dc3545;
-}
-
-.notification-icon-wrapper {
+.notification-icon-wrapper-outlook {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   height: 40px;
-  border-radius: 50%;
-  background: #f8f9fa;
-  transition: all 0.2s;
+  border-radius: 4px;
+  background: #f3f2f1;
+  transition: background 0.2s;
 }
 
-.notification-item:hover .notification-icon-wrapper {
-  background: #e9ecef;
-  transform: scale(1.1);
+.notification-item-outlook:hover .notification-icon-wrapper-outlook {
+  background: #e1dfdd;
 }
 
-.notification-icon-svg {
-  transition: transform 0.2s;
+.notification-content-outlook {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
-.notification-item:hover .notification-icon-svg {
-  transform: scale(1.1);
+.notification-header-outlook {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 4px;
+  gap: 12px;
 }
 
-.notification-content {
+.notification-sender-outlook {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 1;
   min-width: 0;
 }
 
-.notification-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 8px;
-  gap: 15px;
-}
-
-.notification-title {
-  margin: 0;
-  font-size: 16px;
+.notification-title-outlook {
+  font-size: 15px;
   font-weight: 600;
-  color: #333;
+  color: #323130;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.notification-time {
-  font-size: 12px;
-  color: #666;
-  white-space: nowrap;
+.notification-item-outlook.unread .notification-title-outlook {
+  font-weight: 700;
+}
+
+.unread-indicator {
+  width: 8px;
+  height: 8px;
+  background: #0078d4;
+  border-radius: 50%;
   flex-shrink: 0;
 }
 
-.notification-message {
-  margin: 0 0 10px 0;
-  color: #555;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-/* Tracker Request Details */
-.tracker-request-details {
-  margin-top: 12px;
-  padding: 12px;
-  background: #f8f9fa;
-  border-radius: 6px;
-  border: 1px solid #dee2e6;
-}
-
-.tracker-details-grid {
-  margin-bottom: 12px;
-  font-size: 13px;
-  color: #666;
-  line-height: 1.8;
-}
-
-.tracker-detail-item {
-  margin-bottom: 6px;
-}
-
-.task-type-badge,
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  margin-left: 6px;
-}
-
-.task-type-badge {
-  background: #e3f2fd;
-  color: #1976d2;
-}
-
-.status-badge.status-done {
-  background: #e8f5e9;
-  color: #2e7d32;
-}
-
-.status-badge.status-halfway {
-  background: #fff3e0;
-  color: #f57c00;
-}
-
-.tracker-detail-note {
-  margin-top: 8px;
-  padding: 8px;
-  background: #fff;
-  border-left: 3px solid #ffc107;
-  border-radius: 4px;
-  font-style: italic;
-  font-size: 12px;
-}
-
-.tracker-action-buttons {
+.notification-meta-outlook {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
-.btn-with-icon {
-  display: inline-flex;
+.notification-time-outlook {
+  font-size: 13px;
+  color: #605e5c;
+  white-space: nowrap;
+}
+
+.notification-actions-outlook {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.action-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  flex: 1;
-  min-width: 120px;
+  color: #605e5c;
   transition: all 0.2s;
+  font-size: 14px;
 }
 
-.btn-with-icon:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+.action-btn:hover {
+  background: #e1dfdd;
+  color: #323130;
 }
 
-.notification-link {
-  display: inline-flex;
-  align-items: center;
-  color: #007bff;
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 600;
-  margin-top: 8px;
-  transition: all 0.2s;
+.action-btn.delete:hover {
+  background: #fef6f6;
+  color: #d13438;
 }
 
-.notification-link:hover {
-  color: #0056b3;
-  text-decoration: underline;
+.notification-preview-outlook {
+  font-size: 14px;
+  color: #605e5c;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
 }
 
-.notification-actions {
+.no-notifications-outlook {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  color: #a19f9d;
+  text-align: center;
+}
+
+.no-notifications-outlook p {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* Preview Pane (Right Pane - Outlook-style) */
+.notification-preview-pane {
+  width: 400px;
+  border-left: 1px solid #edebe9;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.preview-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #edebe9;
+  display: flex;
+  justify-content: flex-end;
+  background: #faf9f8;
+}
+
+.close-preview {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #605e5c;
+  transition: all 0.2s;
+}
+
+.close-preview:hover {
+  background: #e1dfdd;
+  color: #323130;
+}
+
+.preview-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.preview-title-section {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #edebe9;
+}
+
+.preview-icon-large {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f2f1;
+  border-radius: 4px;
   flex-shrink: 0;
 }
 
-.btn-icon {
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: #f5f5f5;
-  border-radius: 50%;
-  cursor: pointer;
+.preview-title {
+  margin: 0 0 8px 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #323130;
+}
+
+.preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview-time {
+  font-size: 13px;
+  color: #605e5c;
+}
+
+.preview-body {
+  color: #323130;
+  line-height: 1.6;
+}
+
+.preview-message {
+  font-size: 15px;
+  margin: 0 0 24px 0;
+  color: #323130;
+  white-space: pre-wrap;
+}
+
+/* Tracker Request Details (Outlook-style) */
+.tracker-request-details-outlook {
+  margin: 24px 0;
+  padding: 20px;
+  background: #faf9f8;
+  border-radius: 4px;
+  border: 1px solid #edebe9;
+}
+
+.details-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
   font-size: 14px;
+}
+
+.detail-row strong {
+  color: #323130;
+  font-weight: 600;
+  min-width: 100px;
+  flex-shrink: 0;
+}
+
+.detail-row span {
+  color: #605e5c;
+  flex: 1;
+}
+
+.detail-row.full-width {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-note {
+  margin: 8px 0 0 0;
+  padding: 12px;
+  background: #ffffff;
+  border-left: 3px solid #ffaa44;
+  border-radius: 4px;
+  font-style: italic;
+  color: #605e5c;
+  font-size: 14px;
+}
+
+.task-type-badge-outlook,
+.status-badge-outlook {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.task-type-badge-outlook {
+  background: #deecf9;
+  color: #0078d4;
+}
+
+.status-badge-outlook.status-done {
+  background: #dff6dd;
+  color: #107c10;
+}
+
+.status-badge-outlook.status-halfway {
+  background: #fff4e5;
+  color: #ffaa44;
+}
+
+.tracker-action-buttons-outlook {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #edebe9;
+}
+
+.btn-approve,
+.btn-reject {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
-  color: #666;
 }
 
-.btn-icon:hover {
-  background: #e0e0e0;
-  transform: scale(1.1);
-  color: #333;
+.btn-approve {
+  background: #107c10;
+  color: white;
 }
 
-.btn-icon.delete:hover {
-  background: #ffebee;
-  color: #d32f2f;
+.btn-approve:hover:not(:disabled) {
+  background: #0e6e0e;
 }
 
-/* Modal Styles */
+.btn-reject {
+  background: #d13438;
+  color: white;
+}
+
+.btn-reject:hover:not(:disabled) {
+  background: #b02a2e;
+}
+
+.btn-approve:disabled,
+.btn-reject:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.preview-actions {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #edebe9;
+}
+
+.preview-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  background: #0078d4;
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.preview-link:hover {
+  background: #106ebe;
+}
+
+/* Modal Styles (unchanged) */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -407,11 +638,11 @@
 
 .modal-content {
   background: white;
-  border-radius: 12px;
-  padding: 25px;
+  border-radius: 8px;
+  padding: 24px;
   max-width: 500px;
   width: 90%;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   animation: slideUp 0.3s ease;
 }
 
@@ -429,18 +660,19 @@
 .modal-header {
   display: flex;
   align-items: center;
-  margin-bottom: 15px;
+  margin-bottom: 16px;
 }
 
 .modal-header h2 {
   margin: 0;
-  color: #dc3545;
+  color: #d13438;
   font-size: 20px;
+  font-weight: 600;
 }
 
 .modal-description {
-  margin: 0 0 15px 0;
-  color: #666;
+  margin: 0 0 16px 0;
+  color: #605e5c;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -449,51 +681,100 @@
   width: 100%;
   padding: 10px;
   font-size: 14px;
-  border: 2px solid #ddd;
-  border-radius: 6px;
+  border: 1px solid #edebe9;
+  border-radius: 4px;
   resize: vertical;
   font-family: inherit;
-  margin-bottom: 15px;
+  margin-bottom: 16px;
   transition: border-color 0.2s;
+  min-height: 100px;
 }
 
 .rejection-textarea:focus {
   outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+  border-color: #0078d4;
+  box-shadow: 0 0 0 1px #0078d4;
 }
 
 .modal-footer {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   justify-content: flex-end;
 }
 
+/* Responsive Design */
+@media (max-width: 1024px) {
+  .notification-preview-pane {
+    width: 350px;
+  }
+}
+
 @media (max-width: 768px) {
-  .notifications-container {
-    padding: 15px;
-  }
-  
-  .notification-item {
-    flex-direction: column;
-    gap: 10px;
-  }
-  
-  .notification-actions {
-    flex-direction: row;
-    justify-content: flex-end;
-  }
-  
-  .notification-header {
-    flex-direction: column;
-    gap: 5px;
+  .notifications-container-outlook {
+    height: auto;
+    min-height: calc(100vh - 120px);
   }
 
-  .tracker-action-buttons {
+  .notifications-content-outlook {
     flex-direction: column;
   }
 
-  .btn-with-icon {
+  .notification-preview-pane {
     width: 100%;
+    border-left: none;
+    border-top: 1px solid #edebe9;
+    max-height: 50vh;
   }
+
+  .notifications-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .toolbar-right {
+    width: 100%;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .search-box {
+    width: 100%;
+    min-width: auto;
+  }
+
+  .filter-tabs {
+    flex-wrap: wrap;
+  }
+
+  .notification-item-outlook {
+    padding: 12px 16px;
+  }
+
+  .notification-checkbox-wrapper {
+    display: none;
+  }
+}
+
+/* Scrollbar Styling (Outlook-like) */
+.notifications-list-outlook::-webkit-scrollbar,
+.preview-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.notifications-list-outlook::-webkit-scrollbar-track,
+.preview-content::-webkit-scrollbar-track {
+  background: #faf9f8;
+}
+
+.notifications-list-outlook::-webkit-scrollbar-thumb,
+.preview-content::-webkit-scrollbar-thumb {
+  background: #c8c6c4;
+  border-radius: 4px;
+}
+
+.notifications-list-outlook::-webkit-scrollbar-thumb:hover,
+.preview-content::-webkit-scrollbar-thumb:hover {
+  background: #a19f9d;
 }

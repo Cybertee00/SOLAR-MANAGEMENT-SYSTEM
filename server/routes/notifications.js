@@ -13,10 +13,13 @@ module.exports = (pool) => {
       let query = `
         SELECT n.*, 
                t.task_code, t.task_type, t.scheduled_date,
-               a.asset_name
+               a.asset_name,
+               tsr.status as request_status
         FROM notifications n
         LEFT JOIN tasks t ON n.task_id = t.id
         LEFT JOIN assets a ON t.asset_id = a.id
+        LEFT JOIN tracker_status_requests tsr ON n.type = 'tracker_status_request' 
+          AND (n.metadata->>'request_id')::text = tsr.id::text
         WHERE n.user_id = $1
       `;
       
@@ -30,7 +33,7 @@ module.exports = (pool) => {
       
       const result = await pool.query(query, params);
       
-      // Parse metadata JSONB
+      // Parse metadata JSONB and add request status for tracker_status_request notifications
       const notifications = result.rows.map(notif => {
         if (notif.metadata && typeof notif.metadata === 'string') {
           try {
@@ -39,6 +42,18 @@ module.exports = (pool) => {
             notif.metadata = null;
           }
         }
+        
+        // Add request status to metadata for tracker_status_request notifications
+        if (notif.type === 'tracker_status_request' && notif.request_status) {
+          if (!notif.metadata) {
+            notif.metadata = {};
+          }
+          notif.metadata.request_status = notif.request_status;
+        }
+        
+        // Remove request_status from top level (it's now in metadata)
+        delete notif.request_status;
+        
         return notif;
       });
       

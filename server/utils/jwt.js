@@ -1,7 +1,10 @@
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || 'CHANGE-THIS-SECRET-IN-PRODUCTION-USE-RANDOM-STRING';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h'; // 24 hours default
+const { isDevelopment } = require('./env');
+const JWT_EXPIRES_IN = isDevelopment() 
+  ? (process.env.JWT_EXPIRES_IN || '168h') // 7 days in development
+  : (process.env.JWT_EXPIRES_IN || '24h'); // 24 hours in production
 
 /**
  * Generate JWT token for authenticated user

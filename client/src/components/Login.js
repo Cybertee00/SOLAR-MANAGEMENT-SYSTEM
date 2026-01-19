@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { getErrorMessage, errorContains } from '../utils/errorHandler';
 import logo from '../assets/logo.png';
 import './Login.css';
 
@@ -55,20 +57,23 @@ function Login() {
         navigate('/');
       } else {
         // Handle special error messages (e.g., ACCESS RESTRICTED)
-        if (result.error === 'ACCESS RESTRICTED' && result.admin_email) {
+        const errorMsg = getErrorMessage(result.error || result, 'Login failed. Please check your credentials.');
+        if (errorContains(result.error || result, 'ACCESS RESTRICTED') && result.admin_email) {
           setError(`ACCESS RESTRICTED\n\nYour account access has been restricted. Please contact the administrator at ${result.admin_email} for assistance.`);
         } else {
-          setError(result.error || 'Login failed. Please check your credentials.');
+          setError(errorMsg);
         }
       }
     } catch (err) {
       console.error('Login error caught:', err);
+      const errorMsg = getErrorMessage(err, 'Network error. Please check your connection and server status.');
+      
       if (err.code === 'ECONNABORTED') {
         setError('Connection timeout. Please check if the server is running and accessible.');
-      } else if (err.message && err.message.includes('timeout')) {
+      } else if (errorContains(err, 'timeout')) {
         setError('Request timed out. The server may not be responding. Please check: 1) Server is running, 2) Correct API URL, 3) Network connection.');
       } else {
-        setError(err.message || 'Network error. Please check your connection and server status.');
+        setError(errorMsg);
       }
     } finally {
       setLoading(false);
@@ -92,11 +97,11 @@ function Login() {
         </div>
 
         {error && (
-          <div className={`alert ${error.includes('ACCESS RESTRICTED') ? 'alert-restricted' : 'alert-error'}`}>
-            {error.split('\n').map((line, idx) => (
+          <div className={`alert ${errorContains(error, 'ACCESS RESTRICTED') ? 'alert-restricted' : 'alert-error'}`}>
+            {getErrorMessage(error).split('\n').map((line, idx, lines) => (
               <React.Fragment key={idx}>
                 {line}
-                {idx < error.split('\n').length - 1 && <br />}
+                {idx < lines.length - 1 && <br />}
               </React.Fragment>
             ))}
           </div>
@@ -177,5 +182,9 @@ function Login() {
     </div>
   );
 }
+
+Login.propTypes = {
+  // No props - component uses hooks for state and navigation
+};
 
 export default Login;

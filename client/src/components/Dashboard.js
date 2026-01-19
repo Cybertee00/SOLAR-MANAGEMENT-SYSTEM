@@ -17,9 +17,125 @@ import {
   LinearScale,
   BarElement
 } from 'chart.js';
-import { Doughnut, Bar } from 'react-chartjs-2';
+import { Doughnut, Bar, Line } from 'react-chartjs-2';
+import { LineElement, PointElement } from 'chart.js';
 
-ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, LineElement, PointElement);
+
+// Color mapping for different task frequencies (from Calendar.js)
+const FREQUENCY_COLORS = {
+  'weekly': '#ffff00',        // Yellow - WEEKLY
+  'monthly': '#92d050',        // Green - MONTHLY
+  'quarterly': '#00b0f0',      // Blue - QUARTERLY
+  'biannually': '#BFBFBF',     // Light Grey - BI-ANNUAL
+  'bi-annually': '#BFBFBF',    // Light Grey - BI-ANNUAL
+  'bi-annual': '#BFBFBF',      // Light Grey - BI-ANNUAL
+  'annually': '#CC5C0B',       // Orange/Brown - ANNUAL
+  'annual': '#CC5C0B',         // Orange/Brown - ANNUAL
+  'bimonthly': '#F9B380',      // Light Orange - BI-MONTHLY
+  'bi-monthly': '#F9B380',    // Light Orange - BI-MONTHLY
+  'public holiday': '#808080', // Grey - PUBLIC HOLIDAY
+  'holiday': '#808080',        // Grey - PUBLIC HOLIDAY
+  'public': '#808080'          // Grey - PUBLIC HOLIDAY
+};
+
+// Function to get event color (from Calendar.js)
+function getEventColor(event) {
+  // Check for "Complete Outstanding PM's and reports" - return special marker
+  if (event.task_title) {
+    const title = typeof event.task_title === 'string' 
+      ? event.task_title 
+      : (event.task_title.text || event.task_title.richText?.map(r => r.text).join('') || '');
+    if (title.toLowerCase().includes("complete outstanding")) {
+      return '#FF0000'; // Red for outstanding tasks
+    }
+  }
+  
+  // First check if frequency is explicitly set
+  if (event.frequency) {
+    const freq = event.frequency.toLowerCase();
+    if (FREQUENCY_COLORS[freq]) {
+      return FREQUENCY_COLORS[freq];
+    }
+  }
+  
+  // Try to detect from task title
+  if (event.task_title) {
+    const title = typeof event.task_title === 'string' 
+      ? event.task_title.toLowerCase()
+      : (event.task_title.text || event.task_title.richText?.map(r => r.text).join('') || '').toLowerCase();
+    
+    // Check for public holiday first (most specific)
+    if (title.includes('public holiday') || title.includes('holiday')) {
+      return FREQUENCY_COLORS['public holiday'];
+    }
+    
+    // Check for bi-monthly
+    if (title.includes('bi-monthly') || title.includes('bimonthly')) {
+      return FREQUENCY_COLORS['bi-monthly'];
+    }
+    
+    // Check for bi-annually
+    if (title.includes('bi-annually') || title.includes('biannually') || title.includes('bi-annual')) {
+      return FREQUENCY_COLORS['bi-annually'];
+    }
+    
+    // Check for annually/annual
+    if (title.includes('annually') || title.includes('annual')) {
+      return FREQUENCY_COLORS['annually'];
+    }
+    
+    // Check for quarterly
+    if (title.includes('quarterly') || title.includes('quaterly')) {
+      return FREQUENCY_COLORS['quarterly'];
+    }
+    
+    // Check for monthly
+    if (title.includes('monthly')) {
+      return FREQUENCY_COLORS['monthly'];
+    }
+    
+    // Check for weekly
+    if (title.includes('weekly')) {
+      return FREQUENCY_COLORS['weekly'];
+    }
+  }
+  
+  // Default color if no match
+  return '#3498db';
+}
+
+// Plugin to display numbers in the middle of horizontal bars
+ChartJS.register({
+  id: 'barValuePlugin',
+  afterDatasetsDraw: (chart) => {
+    // Only apply to bar charts, not doughnut charts
+    if (chart.config.type !== 'bar') return;
+    
+    const ctx = chart.ctx;
+    const meta = chart.getDatasetMeta(0);
+    
+    meta.data.forEach((bar, index) => {
+      const value = chart.data.datasets[0].data[index];
+      if (value > 0) {
+        // For horizontal bars (indexAxis: 'y'), x is the value position, y is the category position
+        // Position text at the middle of the bar horizontally
+        const x = bar.x / 2; // Middle of the bar (halfway from 0 to bar.x)
+        const y = bar.y;
+        
+        ctx.save();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 13px Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+        ctx.shadowBlur = 2;
+        ctx.fillText(value.toString(), x, y);
+        ctx.restore();
+      }
+    });
+  }
+});
 
 // BI Color Palette
 const BI_COLORS = {
@@ -33,12 +149,24 @@ const BI_COLORS = {
   darkGray: '#757575'
 };
 
-// Create gradient function for charts
+// Create gradient function for charts (vertical gradient for doughnuts)
 const createGradient = (ctx, chartArea, color1, color2) => {
   if (!chartArea) {
-    return color1; // Fallback to solid color if chart area not available
+    return color1;
   }
   const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+  gradient.addColorStop(0, color1);
+  gradient.addColorStop(0.5, color2);
+  gradient.addColorStop(1, color1);
+  return gradient;
+};
+
+// Create horizontal gradient for bar charts
+const createHorizontalGradient = (ctx, chartArea, color1, color2) => {
+  if (!chartArea) {
+    return color1;
+  }
+  const gradient = ctx.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
   gradient.addColorStop(0, color1);
   gradient.addColorStop(1, color2);
   return gradient;
@@ -70,6 +198,13 @@ function Dashboard() {
 
   useEffect(() => {
     loadDashboardData();
+    
+    // Auto-refresh dashboard data every 30 seconds
+    const refreshInterval = setInterval(() => {
+      loadDashboardData();
+    }, 30000); // 30 seconds
+    
+    return () => clearInterval(refreshInterval);
   }, [pmPeriod]);
 
   const loadDashboardData = async () => {
@@ -178,14 +313,60 @@ function Dashboard() {
       };
       setInventoryStats(invStats);
 
-      // Load today's calendar activities
+      // Load today's calendar activities and tasks
       const today = new Date().toISOString().split('T')[0];
       try {
-        const calendarRes = await getCalendarEventsByDate(today);
+        const [calendarRes] = await Promise.all([
+          getCalendarEventsByDate(today).catch(() => ({ data: [] }))
+        ]);
+        
         const events = calendarRes.data || [];
-        setTodayActivities(events.slice(0, 5)); // Show max 5 activities
+        
+        // Filter tasks scheduled for today
+        const todayTasks = tasks.filter(task => {
+          if (!task.scheduled_date) return false;
+          const taskDate = new Date(task.scheduled_date).toISOString().split('T')[0];
+          return taskDate === today;
+        });
+        
+        // Combine calendar events and tasks
+        const combinedActivities = [
+          // Calendar events
+          ...events.map(event => ({
+            id: `event-${event.id}`,
+            title: event.task_title || event.event_name || 'Untitled Event',
+            description: event.description,
+            event_date: event.event_date,
+            type: 'calendar_event',
+            frequency: event.frequency,
+            color: getEventColor(event)
+          })),
+          // Tasks scheduled for today
+          ...todayTasks.map(task => ({
+            id: `task-${task.id}`,
+            title: task.template_name || task.task_code || 'Task',
+            description: task.location ? `Location: ${task.location}` : null,
+            event_date: task.scheduled_date,
+            type: 'task',
+            status: task.status,
+            task_code: task.task_code,
+            frequency: task.frequency || null,
+            // For tasks, try to get color from template frequency or default
+            color: task.frequency ? (FREQUENCY_COLORS[task.frequency.toLowerCase()] || '#3498db') : '#3498db'
+          }))
+        ];
+        
+        // Sort by time if available, otherwise by title
+        combinedActivities.sort((a, b) => {
+          if (a.event_date && b.event_date) {
+            return a.event_date.localeCompare(b.event_date);
+          }
+          return (a.title || '').localeCompare(b.title || '');
+        });
+        
+        setTodayActivities(combinedActivities.slice(0, 5)); // Show max 5 activities
       } catch (error) {
-        console.error('Error loading calendar events:', error);
+        console.error('Error loading today\'s activities:', error);
         setTodayActivities([]);
       }
 
@@ -209,9 +390,11 @@ function Dashboard() {
           const chart = context.chart;
           const {ctx, chartArea} = chart;
           if (context.dataIndex === 0) {
-            return createGradient(ctx, chartArea, '#66BB6A', '#4CAF50');
+            // Vibrant green gradient for completed
+            return createGradient(ctx, chartArea, '#2E7D32', '#81C784');
           }
-          return BI_COLORS.lightGray;
+          // Subtle gray gradient for remaining
+          return createGradient(ctx, chartArea, '#BDBDBD', '#E0E0E0');
         },
         borderColor: '#ffffff',
         borderWidth: 3,
@@ -221,7 +404,7 @@ function Dashboard() {
     };
   };
 
-  // Grass Cutting/Panel Wash Chart Data with Gradient
+  // Grass Cutting/Panel Wash Chart Data - Doughnut Chart
   const getTrackerChartData = () => {
     const progress = trackerViewMode === 'grass_cutting' ? grassCuttingProgress : panelWashProgress;
     const completedProgress = progress;
@@ -235,9 +418,15 @@ function Dashboard() {
           const chart = context.chart;
           const {ctx, chartArea} = chart;
           if (context.dataIndex === 0) {
-            return createGradient(ctx, chartArea, '#66BB6A', '#4CAF50');
+            // Green gradient for grass cutting, blue gradient for panel wash
+            if (trackerViewMode === 'grass_cutting') {
+              return createGradient(ctx, chartArea, '#1B5E20', '#66BB6A');
+            } else {
+              return createGradient(ctx, chartArea, '#0D47A1', '#64B5F6');
+            }
           }
-          return BI_COLORS.lightGray;
+          // Subtle gray gradient for remaining
+          return createGradient(ctx, chartArea, '#BDBDBD', '#E0E0E0');
         },
         borderColor: '#ffffff',
         borderWidth: 3,
@@ -259,10 +448,14 @@ function Dashboard() {
         backgroundColor: (context) => {
           const chart = context.chart;
           const {ctx, chartArea} = chart;
+          // Horizontal gradients for bar chart - left to right flow
           const gradients = [
-            createGradient(ctx, chartArea, '#66BB6A', '#4CAF50'),
-            createGradient(ctx, chartArea, '#FFB74D', '#FF9800'),
-            createGradient(ctx, chartArea, '#EF5350', '#F44335')
+            // In Stock: Rich green gradient
+            createHorizontalGradient(ctx, chartArea, '#2E7D32', '#81C784'),
+            // Low Stock: Amber/orange warning gradient
+            createHorizontalGradient(ctx, chartArea, '#E65100', '#FFB74D'),
+            // Out of Stock: Red danger gradient
+            createHorizontalGradient(ctx, chartArea, '#B71C1C', '#EF5350')
           ];
           return gradients[context.dataIndex] || '#9E9E9E';
         },
@@ -327,7 +520,7 @@ function Dashboard() {
 
   const barChartOptions = {
     responsive: true,
-    maintainAspectRatio: true,
+    maintainAspectRatio: false,
     indexAxis: 'y',
     plugins: {
       legend: {
@@ -361,10 +554,80 @@ function Dashboard() {
     scales: {
       x: {
         beginAtZero: true,
+        max: 100,
         ticks: {
           font: {
             family: "'Roboto', sans-serif",
             size: 12,
+          },
+        },
+        grid: {
+          display: false,
+        },
+      },
+      y: {
+        ticks: {
+          font: {
+            family: "'Roboto', sans-serif",
+            size: 12,
+          },
+        },
+        grid: {
+          display: false,
+        },
+      },
+    },
+    animation: {
+      duration: 1200,
+      easing: 'easeOutQuart',
+    },
+  };
+
+  // Options for Grass Cutting/Panel Wash horizontal bar chart
+  const trackerBarChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    indexAxis: 'y',
+    plugins: {
+      legend: {
+        display: false,
+      },
+      tooltip: {
+        enabled: true,
+        backgroundColor: 'rgba(0, 0, 0, 0.85)',
+        padding: 14,
+        titleFont: {
+          size: 15,
+          weight: '600',
+          family: "'Roboto', sans-serif",
+        },
+        bodyFont: {
+          size: 14,
+          family: "'Roboto', sans-serif",
+        },
+        callbacks: {
+          label: function(context) {
+            return `${context.parsed.x.toFixed(1)}%`;
+          },
+        },
+        displayColors: true,
+        boxPadding: 8,
+        cornerRadius: 8,
+        titleColor: '#fff',
+        bodyColor: '#fff',
+      },
+    },
+    scales: {
+      x: {
+        beginAtZero: true,
+        max: 100,
+        ticks: {
+          font: {
+            family: "'Roboto', sans-serif",
+            size: 12,
+          },
+          callback: function(value) {
+            return value + '%';
           },
         },
         grid: {
@@ -425,12 +688,12 @@ function Dashboard() {
         </Link>
       </div>
 
-      {/* Main Dashboard Grid */}
+      {/* Main Dashboard Grid - 2x2 Layout */}
       <div className="dashboard-grid">
-        {/* Row 1: Three cards side by side */}
+        {/* Row 1: PM Completion Rate and Grass Cutting Progress */}
         <div className="dashboard-row">
           {/* PM Completion Rate */}
-          <Link to="/tasks" className="dashboard-card">
+          <div className="dashboard-card">
             <div className="card-header">
               <h3>PM Completion Rate</h3>
               <select 
@@ -462,9 +725,6 @@ function Dashboard() {
                     {pmStats.total > 0 ? ((pmStats.completed / pmStats.total) * 100).toFixed(0) : 0}%
                   </div>
                   <div className="chart-label">Complete</div>
-                  <div className="chart-detail">
-                    {pmStats.completed} of {pmStats.total}
-                  </div>
                 </div>
               </div>
               <div className="pm-stats-breakdown">
@@ -488,10 +748,13 @@ function Dashboard() {
                 </div>
               </div>
             </div>
-          </Link>
+            <div className="card-footer">
+              <Link to="/tasks" className="view-button">View</Link>
+            </div>
+          </div>
 
           {/* Grass Cutting / Panel Wash Progress */}
-          <Link to="/plant" className="dashboard-card">
+          <div className="dashboard-card">
             <div className="card-header">
               <h3>Grass Cutting Progress</h3>
               <select 
@@ -525,10 +788,16 @@ function Dashboard() {
                 </div>
               </div>
             </div>
-          </Link>
+            <div className="card-footer">
+              <Link to="/plant" className="view-button">View</Link>
+            </div>
+          </div>
+        </div>
 
+        {/* Row 2: Today's Activities and Spares Inventory Status */}
+        <div className="dashboard-row">
           {/* Today's Activities */}
-          <Link to="/calendar" className="dashboard-card daily-activities-card">
+          <div className="dashboard-card daily-activities-card">
             <div className="card-header">
               <h3>Today's Activities</h3>
             </div>
@@ -537,39 +806,56 @@ function Dashboard() {
                 <div className="no-activities">No activities scheduled for today</div>
               ) : (
                 <ul>
-                  {todayActivities.map((activity, index) => (
-                    <li key={activity.id || index} className="activity-item">
-                      <div className="activity-title">{activity.title || activity.event_name || 'Untitled Event'}</div>
-                      {activity.description && (
-                        <div className="activity-description">{activity.description}</div>
-                      )}
-                      {activity.event_date && (
-                        <div className="activity-time">
-                          {new Date(activity.event_date).toLocaleTimeString('en-US', { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
-                          })}
+                  {todayActivities.map((activity, index) => {
+                    const activityColor = activity.color || '#3498db';
+                    return (
+                      <li 
+                        key={activity.id || index} 
+                        className="activity-item"
+                        style={{
+                          borderLeftColor: activityColor,
+                          borderLeftWidth: '4px'
+                        }}
+                      >
+                        <div className="activity-title">
+                          {activity.title || activity.event_name || 'Untitled Event'}
+                          {activity.type === 'task' && activity.task_code && (
+                            <span style={{ fontSize: '11px', color: '#666', marginLeft: '6px', fontFamily: 'monospace' }}>
+                              ({activity.task_code})
+                            </span>
+                          )}
                         </div>
-                      )}
-                    </li>
-                  ))}
+                        {activity.description && (
+                          <div className="activity-description">{activity.description}</div>
+                        )}
+                        {activity.type === 'task' && activity.status && (
+                          <div className="activity-status" style={{ 
+                            fontSize: '11px', 
+                            color: activity.status === 'completed' ? '#28a745' : 
+                                   activity.status === 'in_progress' ? '#17a2b8' : '#ffc107',
+                            fontWeight: '500',
+                            marginTop: '2px'
+                          }}>
+                            {activity.status.charAt(0).toUpperCase() + activity.status.slice(1).replace('_', ' ')}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
-          </Link>
-        </div>
+            <div className="card-footer">
+              <Link to="/calendar" className="view-button">View</Link>
+            </div>
+          </div>
 
-        {/* Row 2: Spares Inventory Status below Today's Activities */}
-        <div className="dashboard-row-bottom">
-          <Link to="/inventory" className="dashboard-card spares-card">
+          {/* Spares Inventory Status - Numbers Only */}
+          <div className="dashboard-card spares-card">
             <div className="card-header">
               <h3>Spares Inventory Status</h3>
             </div>
-            <div className="spares-chart-container">
-              <Bar
-                data={getInventoryChartData()}
-                options={barChartOptions}
-              />
+            <div className="spares-numbers-container">
               <div className="inventory-summary">
                 <div className="inventory-summary-item">
                   <span className="summary-label">In Stock:</span>
@@ -585,7 +871,10 @@ function Dashboard() {
                 </div>
               </div>
             </div>
-          </Link>
+            <div className="card-footer">
+              <Link to="/inventory" className="view-button">View</Link>
+            </div>
+          </div>
         </div>
       </div>
     </div>

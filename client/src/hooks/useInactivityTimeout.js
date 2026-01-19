@@ -26,8 +26,14 @@ export const useInactivityTimeout = () => {
   const lastWorkContextCheckRef = useRef(0);
   
   // Timeout durations (in milliseconds)
-  const IDLE_TIMEOUT = 45 * 60 * 1000; // 45 minutes
-  const WORK_ACTIVE_TIMEOUT = 3 * 60 * 60 * 1000; // 3 hours (middle of 2-4 hour range)
+  // Extended in development to prevent interruptions
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  const IDLE_TIMEOUT = isDevelopment 
+    ? 24 * 60 * 60 * 1000 // 24 hours in development
+    : 45 * 60 * 1000; // 45 minutes in production
+  const WORK_ACTIVE_TIMEOUT = isDevelopment
+    ? 24 * 60 * 60 * 1000 // 24 hours in development
+    : 3 * 60 * 60 * 1000; // 3 hours in production
   const WARNING_TIME = 5 * 60 * 1000; // 5 minutes before logout
   const RECENT_API_THRESHOLD = 10 * 60 * 1000; // 10 minutes
   const RECENT_TASK_THRESHOLD = 2 * 60 * 60 * 1000; // 2 hours

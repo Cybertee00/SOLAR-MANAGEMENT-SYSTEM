@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { getTasks, createTask, getChecklistTemplates, getUsers } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { getErrorMessage } from '../utils/errorHandler';
 
 function Tasks() {
   const { isAdmin, isSuperAdmin } = useAuth();
@@ -61,7 +62,7 @@ function Tasks() {
     } catch (error) {
       console.error('Error loading templates:', error);
       console.error('Error details:', error.response?.data || error.message);
-      alert(`Failed to load templates: ${error.response?.data?.error || error.message}`);
+      alert(`Failed to load templates: ${getErrorMessage(error)}`);
     }
   };
 
@@ -115,7 +116,7 @@ function Tasks() {
       alert(`Task created successfully! Task Code: ${response.data.task_code}`);
     } catch (error) {
       console.error('Error creating task:', error);
-      const errorMessage = error.response?.data?.error || error.response?.data?.details || error.message || 'Failed to create task';
+      const errorMessage = getErrorMessage(error, 'Failed to create task');
       alert(`Failed to create task: ${errorMessage}`);
     }
   };

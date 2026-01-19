@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { getCurrentUser, login as apiLogin, logout as apiLogout } from '../api/api';
+import { getErrorMessage } from '../utils/errorHandler';
 
 const AuthContext = createContext(null);
 
@@ -61,9 +62,12 @@ export const AuthProvider = ({ children }) => {
         };
       }
       
+      // Use error handler utility for consistent error extraction
+      const { getErrorMessage } = require('../utils/errorHandler');
+      
       return { 
         success: false, 
-        error: error.response?.data?.error || error.message || 'Login failed',
+        error: getErrorMessage(error, 'Login failed'),
         admin_email: error.response?.data?.admin_email
       };
     }
