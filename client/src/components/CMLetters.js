@@ -320,7 +320,7 @@ function CMLetters() {
                 borderRadius: '50%', 
                 animation: 'spin 1s linear infinite'
               }}></span>
-              Generating report...
+              Generating...
             </div>
           )}
           <style>{`

@@ -447,7 +447,7 @@ function ChecklistForm() {
             onClick={() => navigate(`/tasks/${id}`)}
             style={{ marginTop: '10px' }}
           >
-            Back to Task Details
+            Back
           </button>
         </div>
       </div>
@@ -699,7 +699,7 @@ function ChecklistForm() {
     <div>
       <div style={{ marginBottom: '20px' }}>
         <button className="btn btn-secondary" onClick={() => navigate(`/tasks/${id}`)}>
-            Back to Task
+            Back
         </button>
       </div>
 

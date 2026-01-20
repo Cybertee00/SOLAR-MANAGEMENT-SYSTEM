@@ -1,6 +1,6 @@
 # Email Notification Setup Guide
 
-This guide explains how to configure email notifications for the Solar O&M Management System.
+This guide explains how to configure email notifications for the SPHAiRPlatform.
 
 ## Overview
 
@@ -26,7 +26,7 @@ SMTP_SERVICE=gmail
 
 # Email Sender Information
 EMAIL_FROM=your_email@gmail.com
-EMAIL_FROM_NAME=Solar O&M Management System
+EMAIL_FROM_NAME=SPHAiRPlatform
 
 # Application URL (for email links)
 APP_URL=http://localhost:3000
@@ -43,7 +43,7 @@ APP_URL=http://localhost:3000
 ### Step 2: Generate App Password
 1. Go to [Google App Passwords](https://myaccount.google.com/apppasswords)
 2. Select **"Mail"** and **"Other (Custom name)"**
-3. Enter **"Solar O&M System"** as the name
+3. Enter **"SPHAiRPlatform"** as the name
 4. Click **"Generate"**
 5. Copy the **16-character password** (use this as `SMTP_PASS`)
 
@@ -57,7 +57,7 @@ SMTP_USER=your_work_email@gmail.com
 SMTP_PASS=xxxx xxxx xxxx xxxx
 SMTP_SERVICE=gmail
 EMAIL_FROM=your_work_email@gmail.com
-EMAIL_FROM_NAME=Solar O&M Management System
+EMAIL_FROM_NAME=SPHAiRPlatform
 APP_URL=http://localhost:3000
 ```
 
@@ -83,7 +83,7 @@ SMTP_USER=your_work_email@company.com
 SMTP_PASS=your_office365_password
 SMTP_SERVICE=outlook
 EMAIL_FROM=your_work_email@company.com
-EMAIL_FROM_NAME=Solar O&M Management System
+EMAIL_FROM_NAME=SPHAiRPlatform
 APP_URL=http://localhost:3000
 ```
 
@@ -106,7 +106,7 @@ SMTP_USER=your_email@outlook.com
 SMTP_PASS=your_app_password_or_regular_password
 SMTP_SERVICE=outlook
 EMAIL_FROM=your_email@outlook.com
-EMAIL_FROM_NAME=Solar O&M Management System
+EMAIL_FROM_NAME=SPHAiRPlatform
 APP_URL=http://localhost:3000
 ```
 

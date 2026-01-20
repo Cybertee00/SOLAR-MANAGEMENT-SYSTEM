@@ -569,7 +569,7 @@ function Calendar() {
                   onClick={handleSaveEvent}
                   disabled={!eventForm.event_date || !eventForm.task_title}
                 >
-                  {editingEvent ? 'Update' : 'Add'} Event
+                  {editingEvent ? 'Update' : 'Add'}
                 </button>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { getPlantMapStructure, savePlantMapStructure, submitTrackerStatusRequest } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { generatePlantMapReport } from '../utils/plantMapReport';
 import './Plant.css';
 
 // Correct cabinet mapping: 24 cabinets total
@@ -128,6 +129,8 @@ function Plant() {
   });
   const saveTimeoutRef = useRef(null);
   const hasLoadedRef = useRef(false);
+  const mapContainerRef = useRef(null);
+  const [downloading, setDownloading] = useState(false);
 
   // Load map structure with fallback chain: Server -> localStorage -> empty
   useEffect(() => {
@@ -357,7 +360,7 @@ function Plant() {
   const mapWidth = useMemo(() => (bounds.maxCol - bounds.minCol) * 28 + 10, [bounds]);
   const mapHeight = useMemo(() => (bounds.maxRow - bounds.minRow) * 28 + 10, [bounds]);
 
-  // Calculate progress for current view mode
+  // Calculate progress and statistics for current view mode
   const progress = useMemo(() => {
     const allTrackers = trackers.filter(t => t.id !== 'SITE_OFFICE');
     if (allTrackers.length === 0) return 0;
@@ -378,6 +381,67 @@ function Plant() {
     const progressValue = ((doneCount + halfwayCount * 0.5) / allTrackers.length) * 100;
     return Math.min(100, Math.max(0, progressValue));
   }, [trackers, viewMode]);
+
+  // Calculate detailed statistics for report
+  const statistics = useMemo(() => {
+    const allTrackers = trackers.filter(t => t.id !== 'SITE_OFFICE');
+    if (allTrackers.length === 0) {
+      return {
+        progress: 0,
+        doneCount: 0,
+        halfwayCount: 0,
+        notDoneCount: 0,
+        totalTrackers: 0
+      };
+    }
+    
+    const doneCount = allTrackers.filter(t => {
+      const color = viewMode === 'grass_cutting' ? t.grassCuttingColor : t.panelWashColor;
+      return color === '#90EE90' || color === '#4CAF50';
+    }).length;
+    
+    const halfwayCount = allTrackers.filter(t => {
+      const color = viewMode === 'grass_cutting' ? t.grassCuttingColor : t.panelWashColor;
+      return color === '#FFD700' || color === '#FF9800';
+    }).length;
+    
+    const notDoneCount = allTrackers.length - doneCount - halfwayCount;
+    const progressValue = ((doneCount + halfwayCount * 0.5) / allTrackers.length) * 100;
+    
+    return {
+      progress: Math.min(100, Math.max(0, progressValue)),
+      doneCount,
+      halfwayCount,
+      notDoneCount,
+      totalTrackers: allTrackers.length
+    };
+  }, [trackers, viewMode]);
+
+  // Handle download report
+  const handleDownloadReport = useCallback(async () => {
+    if (!mapContainerRef.current) {
+      alert('Map container not found. Please refresh the page and try again.');
+      return;
+    }
+
+    if (downloading) {
+      return; // Prevent multiple simultaneous downloads
+    }
+
+    setDownloading(true);
+    try {
+      await generatePlantMapReport(
+        mapContainerRef.current,
+        statistics,
+        viewMode
+      );
+    } catch (error) {
+      console.error('Error generating report:', error);
+      alert('Failed to generate report. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  }, [mapContainerRef, statistics, viewMode, downloading]);
 
   if (loading) {
     return (
@@ -501,6 +565,21 @@ function Plant() {
               {selectionMode ? 'Select' : 'Enable'}
             </button>
 
+            {/* Download Report Button */}
+            <button
+              onClick={handleDownloadReport}
+              className="btn btn-primary"
+              disabled={downloading || trackers.length === 0}
+              style={{ 
+                padding: '8px 16px', 
+                fontSize: '13px',
+                fontWeight: 'bold'
+              }}
+              title="Download plant map report with image and statistics"
+            >
+              {downloading ? 'Generating...' : 'Download'}
+            </button>
+
             {/* Multi-Select Controls */}
             {selectionMode && (
               <div style={{ 
@@ -589,6 +668,7 @@ function Plant() {
         }}
       >
         <div 
+          ref={mapContainerRef}
           style={{
             position: 'relative',
             width: `${mapWidth}px`,

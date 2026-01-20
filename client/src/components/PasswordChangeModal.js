@@ -287,7 +287,7 @@ function PasswordChangeModal({ isOpen, onClose, onSuccess }) {
                 disabled={submitting || passwordStrength.score < 3}
                 style={{ width: '100%' }}
               >
-                {submitting ? 'Changing...' : 'Change Password'}
+                {submitting ? 'Changing...' : 'Change'}
               </button>
             </div>
           </form>

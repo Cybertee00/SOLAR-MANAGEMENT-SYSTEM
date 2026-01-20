@@ -166,7 +166,7 @@ function TaskDetail() {
   return (
     <div>
       <div style={{ marginBottom: '20px' }}>
-        <Link to="/tasks" className="btn btn-secondary">Back to Tasks</Link>
+        <Link to="/tasks" className="btn btn-secondary">Back</Link>
       </div>
 
       <div className="card">
@@ -325,7 +325,7 @@ function TaskDetail() {
                 className="btn btn-secondary"
                 onClick={() => setShowEarlyCompletionModal(true)}
               >
-                Request Early Completion
+                Request
               </button>
             )}
           </div>
@@ -337,7 +337,7 @@ function TaskDetail() {
            task.assigned_users && 
            task.assigned_users.some(u => u.id === user?.id) && (
             <button className="btn btn-primary" onClick={handleStartTask}>
-              Start Task
+              Start
             </button>
           )}
           {/* Show message if user is not assigned but task is pending */}
@@ -364,7 +364,7 @@ function TaskDetail() {
                   onClick={() => setShowPauseModal(true)}
                   style={{ marginLeft: '10px' }}
                 >
-                  Pause Task
+                  Pause
                 </button>
               )}
               {task.is_paused && (
@@ -373,7 +373,7 @@ function TaskDetail() {
                   onClick={handleResumeTask}
                   style={{ marginLeft: '10px' }}
                 >
-                  Resume Task
+                  Resume
                 </button>
               )}
             </>
@@ -384,7 +384,7 @@ function TaskDetail() {
            task.assigned_users.some(u => u.id === user?.id) && (
             <>
               <Link to={`/tasks/${id}/checklist`} className="btn btn-success">
-                Fill Checklist
+                Fill
               </Link>
               <div className="form-group" style={{ marginLeft: '20px', width: '200px' }}>
                 <label>Duration (minutes)</label>
@@ -396,7 +396,7 @@ function TaskDetail() {
                 />
               </div>
               <button className="btn btn-success" onClick={handleCompleteTask} style={{ marginLeft: '10px' }}>
-                Complete Task
+                Complete
               </button>
             </>
           )}
@@ -457,7 +457,7 @@ function TaskDetail() {
                   console.log('Downloading report for task:', id);
                 }}
               >
-                Download Report
+                Download
               </a>
             </div>
             {task.overall_status === 'fail' && (
@@ -611,7 +611,7 @@ function TaskDetail() {
                   className="btn btn-sm btn-warning" 
                   style={{ flex: 1, padding: '8px 16px', fontSize: '13px' }}
                 >
-                  Pause Task
+                  Pause
                 </button>
                 <button 
                   type="button" 

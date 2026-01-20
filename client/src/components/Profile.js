@@ -458,7 +458,7 @@ function Profile() {
                 </div>
               ) : (
                 <label className="btn btn-primary profile-upload-btn" style={{ cursor: uploadingImage ? 'not-allowed' : 'pointer', opacity: uploadingImage ? 0.6 : 1 }}>
-                  {uploadingImage ? 'Uploading...' : 'Upload Image'}
+                  {uploadingImage ? 'Uploading...' : 'Upload'}
                   <input
                     type="file"
                     accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
@@ -525,7 +525,7 @@ function Profile() {
             </div>
             
             <button type="submit" className="btn btn-primary profile-submit-btn" disabled={saving}>
-              {saving ? 'Saving...' : 'Update Profile'}
+              {saving ? 'Saving...' : 'Update'}
             </button>
           </form>
         </div>
@@ -591,7 +591,7 @@ function Profile() {
             </div>
             
             <button type="submit" className="btn btn-primary profile-password-btn" disabled={saving}>
-              {saving ? 'Changing...' : 'Change Password'}
+              {saving ? 'Changing...' : 'Change'}
             </button>
           </form>
         </div>

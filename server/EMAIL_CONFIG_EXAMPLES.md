@@ -18,7 +18,7 @@ SMTP_SERVICE=gmail
 
 # Email sender info
 EMAIL_FROM=your_work_email@gmail.com
-EMAIL_FROM_NAME=Solar O&M Management System
+EMAIL_FROM_NAME=SPHAiRPlatform
 
 # App URL
 APP_URL=http://localhost:3000
@@ -49,7 +49,7 @@ SMTP_SERVICE=outlook
 
 # Email sender info
 EMAIL_FROM=your_work_email@company.com
-EMAIL_FROM_NAME=Solar O&M Management System
+EMAIL_FROM_NAME=SPHAiRPlatform
 
 # App URL
 APP_URL=http://localhost:3000
@@ -71,7 +71,7 @@ SMTP_SERVICE=outlook
 
 # Email sender info
 EMAIL_FROM=your_email@outlook.com
-EMAIL_FROM_NAME=Solar O&M Management System
+EMAIL_FROM_NAME=SPHAiRPlatform
 
 # App URL
 APP_URL=http://localhost:3000
