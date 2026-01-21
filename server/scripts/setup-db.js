@@ -56,6 +56,7 @@ async function setupDatabase() {
       'add_task_metadata.sql',
       'add_draft_responses.sql',
       'add_draft_images.sql',
+      'add_feedback_table.sql',
       'add_draft_spares_used.sql',
       'add_password_to_users.sql',
       'add_api_tokens_and_webhooks.sql',

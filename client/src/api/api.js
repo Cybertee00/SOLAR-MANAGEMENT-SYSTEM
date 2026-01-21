@@ -747,5 +747,8 @@ export const generateLicenseKey = async (companyName) => {
   }
 };
 
+// Feedback submission
+export const submitFeedback = (data) => api.post('/feedback', data);
+
 export default api;
 

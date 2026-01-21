@@ -61,8 +61,17 @@ module.exports = (pool) => {
         try {
           await syncInventoryFromExcel();
           lastSyncedMtimeMs = mtimeMs;
-        } finally {
+        } catch (syncError) {
+          // Log error but don't throw - allow inventory reads to continue
+          console.error('[INVENTORY] Error syncing from Excel:', syncError.message);
+          console.error('[INVENTORY] Sync error stack:', syncError.stack);
+          // Reset syncInFlight so it can be retried on next request
           syncInFlight = null;
+          throw syncError; // Re-throw so caller knows sync failed
+        } finally {
+          if (syncInFlight) {
+            syncInFlight = null;
+          }
         }
       })();
     }
@@ -78,7 +87,15 @@ module.exports = (pool) => {
   // List inventory items
   router.get('/items', requireAuth, async (req, res) => {
     try {
-      await ensureInventorySyncedIfNeeded();
+      // Try to sync from Excel, but don't fail if sync fails
+      try {
+        await ensureInventorySyncedIfNeeded();
+      } catch (syncError) {
+        // Log sync error but continue - we can still return existing DB data
+        console.error('[INVENTORY] Sync error (non-fatal):', syncError.message);
+        // Continue to fetch from database even if sync failed
+      }
+
       const lowStock = String(req.query.low_stock || '').toLowerCase() === 'true';
       const q = String(req.query.q || '').trim();
 
@@ -102,7 +119,13 @@ module.exports = (pool) => {
       
       res.json(filteredItems);
     } catch (e) {
-      res.status(500).json({ error: 'Failed to fetch inventory items', details: e.message });
+      console.error('[INVENTORY] Error fetching inventory items:', e);
+      console.error('[INVENTORY] Error stack:', e.stack);
+      res.status(500).json({ 
+        error: 'Failed to fetch inventory items', 
+        details: e.message,
+        code: e.code
+      });
     }
   });
 

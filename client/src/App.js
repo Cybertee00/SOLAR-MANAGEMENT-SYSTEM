@@ -22,6 +22,7 @@ import PasswordChangeModal from './components/PasswordChangeModal';
 import LicenseStatus from './components/LicenseStatus';
 import OfflineIndicator from './components/OfflineIndicator';
 import InactivityWarningModal from './components/InactivityWarningModal';
+import FeedbackWidget from './components/FeedbackWidget';
 import { useInactivityTimeout } from './hooks/useInactivityTimeout';
 import syncManager from './utils/syncManager';
 import './App.css';
@@ -93,6 +94,7 @@ function AppContent() {
       <OfflineIndicator />
       {!showPasswordModal && <Header />}
       {!showPasswordModal && <LicenseStatus />}
+      {!showPasswordModal && <FeedbackWidget />}
       <PasswordChangeModal
         isOpen={showPasswordModal}
         onClose={handleModalClose}

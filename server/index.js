@@ -473,6 +473,7 @@ const licenseRoutes = require('./routes/license');
 const syncRoutes = require('./routes/sync');
 const overtimeRequestsRoutes = require('./routes/overtimeRequests');
 const plantRoutes = require('./routes/plant');
+const feedbackRoutes = require('./routes/feedback');
 
 // Swagger (OpenAPI) docs
 const swaggerUi = require('swagger-ui-express');
@@ -530,6 +531,8 @@ app.use('/api/license', licenseRoutes(pool));
 app.use('/api', syncRoutes(pool));
 app.use('/api/overtime-requests', licenseCheck, overtimeRequestsRoutes(pool));
 app.use('/api/plant', licenseCheck, plantRoutes(pool));
+// Feedback route (accessible without license check - users can submit feedback anytime)
+app.use('/api/feedback', feedbackRoutes(pool));
 
 // Versioned API (v1) - mirrors /api for integration stability
 app.use('/api/v1/auth', authRoutes(pool));

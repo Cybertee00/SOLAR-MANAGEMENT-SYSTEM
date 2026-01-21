@@ -363,20 +363,7 @@ function ChecklistTemplates() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
               <h3 style={{ margin: 0 }}>Checklist Structure</h3>
               {canUpdate && (
-                <button 
-                  className="btn btn-primary" 
-                  onClick={handleSaveStructure}
-                  disabled={savingStructure}
-                  style={{ padding: '8px 16px', fontSize: '14px' }}
-                >
-                  {savingStructure ? 'Saving...' : 'Save'}
-                </button>
-              )}
-            </div>
-
-            {canUpdate ? (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '15px' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <button 
                     type="button"
                     className="btn btn-secondary" 
@@ -387,7 +374,20 @@ function ChecklistTemplates() {
                   >
                     Add
                   </button>
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={handleSaveStructure}
+                    disabled={savingStructure}
+                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                  >
+                    {savingStructure ? 'Saving...' : 'Save'}
+                  </button>
                 </div>
+              )}
+            </div>
+
+            {canUpdate ? (
+              <>
 
                 {checklistStructure.sections.length === 0 ? (
                   <p style={{ color: '#666', fontStyle: 'italic', padding: '20px', textAlign: 'center', background: '#f9f9f9', borderRadius: '4px' }}>
@@ -816,9 +816,6 @@ function ChecklistTemplates() {
             <button className="btn btn-primary" onClick={() => setShowUploadModal(true)} title="Upload template file">
               Upload
             </button>
-            <button className="btn btn-secondary" onClick={() => setShowCreateModal(true)} title="Create new template">
-              New
-            </button>
           </div>
         )}
       </div>
@@ -870,7 +867,7 @@ function ChecklistTemplates() {
                         </td>
                         <td data-label="Frequency" style={{ padding: '10px' }}>{template.frequency || 'N/A'}</td>
                         <td data-label="Action" style={{ padding: '10px' }}>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                             <button
                               className="btn btn-primary"
                               onClick={() => handleViewDetails(template.id)}
@@ -878,20 +875,41 @@ function ChecklistTemplates() {
                             >
                               View
                             </button>
-                            {canUpdate && (
-                              <button
-                                className="btn btn-secondary"
-                                onClick={() => handleEdit(template)}
-                              >
-                                Edit
-                              </button>
-                            )}
                             {canDelete && (
                               <button
-                                className="btn btn-danger"
                                 onClick={() => handleDeleteClick(template)}
+                                title="Delete template"
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  padding: '6px',
+                                  background: 'transparent',
+                                  border: 'none',
+                                  cursor: 'pointer',
+                                  transition: 'transform 0.2s ease, opacity 0.2s ease'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.transform = 'scale(1.1)';
+                                  e.currentTarget.style.opacity = '0.8';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.transform = 'scale(1)';
+                                  e.currentTarget.style.opacity = '1';
+                                }}
                               >
-                                Delete
+                                <svg
+                                  width="20"
+                                  height="20"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                >
+                                  <path
+                                    d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
+                                    fill="#dc3545"
+                                  />
+                                </svg>
                               </button>
                             )}
                           </div>
