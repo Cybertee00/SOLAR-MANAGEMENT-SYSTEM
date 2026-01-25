@@ -61,8 +61,7 @@ function Tasks() {
       setTemplates(response.data);
     } catch (error) {
       console.error('Error loading templates:', error);
-      console.error('Error details:', error.response?.data || error.message);
-      alert(`Failed to load templates: ${getErrorMessage(error)}`);
+      // Error will be shown inline if needed
     }
   };
 
@@ -80,7 +79,7 @@ function Tasks() {
     
     // Frontend validation: Ensure required fields are present
     if (!newTask.checklist_template_id || newTask.checklist_template_id.trim() === '') {
-      alert('Please select a checklist template');
+      // Validation error - can be shown inline in form
       return;
     }
     

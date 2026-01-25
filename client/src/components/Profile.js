@@ -181,7 +181,8 @@ function Profile() {
       setTimeout(() => setSuccess(''), 3000);
     } catch (error) {
       console.error('Error updating profile:', error);
-      setError(error.response?.data?.error || 'Failed to update profile. Please try again.');
+      const { getErrorMessage } = require('../utils/errorHandler');
+      setError(getErrorMessage(error, 'Failed to update profile'));
     } finally {
       setSaving(false);
     }
@@ -225,7 +226,8 @@ function Profile() {
       setTimeout(() => setSuccess(''), 3000);
     } catch (error) {
       console.error('Error changing password:', error);
-      setError(error.response?.data?.error || 'Failed to change password. Please try again.');
+      const { getErrorMessage } = require('../utils/errorHandler');
+      setError(getErrorMessage(error, 'Failed to change password'));
     } finally {
       setSaving(false);
     }

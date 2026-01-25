@@ -479,6 +479,13 @@ module.exports = (pool) => {
              VALUES ($1, $2)`,
             [JSON.stringify(structure), newVersion]
           );
+
+          // Ensure cycle exists (create Cycle 1 if task just started)
+          await ensureCycleExists(request.task_type);
+
+          // Check if cycle should be marked as complete after status update
+          const progressData = calculateProgress(structure, request.task_type);
+          await checkAndMarkCycleComplete(request.task_type, progressData.progress);
         }
       }
 
@@ -537,6 +544,492 @@ module.exports = (pool) => {
     } catch (error) {
       console.error('[PLANT] Error reviewing tracker status request:', error);
       res.status(500).json({ error: 'Failed to review tracker status request', details: error.message });
+    }
+  });
+
+  // ==================== CYCLE TRACKING ENDPOINTS ====================
+
+  // Helper function to calculate progress from structure
+  function calculateProgress(structure, taskType) {
+    const allTrackers = structure.filter(t => t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id));
+    if (allTrackers.length === 0) return { progress: 0, doneCount: 0, halfwayCount: 0, totalCount: 0 };
+
+    const colorKey = taskType === 'grass_cutting' ? 'grassCuttingColor' : 'panelWashColor';
+    const doneCount = allTrackers.filter(t => {
+      const color = t[colorKey] || '#ffffff';
+      return color === '#90EE90' || color === '#4CAF50';
+    }).length;
+    
+    const halfwayCount = allTrackers.filter(t => {
+      const color = t[colorKey] || '#ffffff';
+      return color === '#FFD700' || color === '#FF9800';
+    }).length;
+
+    const progress = ((doneCount + halfwayCount * 0.5) / allTrackers.length) * 100;
+    return {
+      progress: Math.min(100, Math.max(0, progress)),
+      doneCount,
+      halfwayCount,
+      totalCount: allTrackers.length
+    };
+  }
+
+  // Helper function to ensure cycle exists (create Cycle 1 when task starts)
+  async function ensureCycleExists(taskType) {
+    // Check if there's any cycle for this task type
+    const existingCycleResult = await pool.query(`
+      SELECT id, cycle_number, completed_at
+      FROM tracker_cycles
+      WHERE task_type = $1
+      ORDER BY cycle_number DESC
+      LIMIT 1
+    `, [taskType]);
+
+    // If no cycles exist, create Cycle 1 (task has just started)
+    if (existingCycleResult.rows.length === 0) {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth() + 1;
+
+      const newCycleResult = await pool.query(`
+        INSERT INTO tracker_cycles (task_type, cycle_number, started_at, year, month)
+        VALUES ($1, 1, $2, $3, $4)
+        RETURNING id, cycle_number, started_at, year, month
+      `, [taskType, now, year, month]);
+
+      console.log(`[PLANT] Cycle 1 created for ${taskType} - task has started`);
+      return newCycleResult.rows[0];
+    }
+
+    // If there's an incomplete cycle, return it
+    const incompleteCycle = existingCycleResult.rows.find(c => !c.completed_at);
+    if (incompleteCycle) {
+      return incompleteCycle;
+    }
+
+    // All cycles are complete, return null (shouldn't happen in normal flow)
+    return null;
+  }
+
+  // Helper function to check and mark cycle as complete
+  async function checkAndMarkCycleComplete(taskType, progress) {
+    if (progress < 100) return;
+
+    // Get current incomplete cycle
+    const cycleResult = await pool.query(`
+      SELECT id, cycle_number, completed_at
+      FROM tracker_cycles
+      WHERE task_type = $1 AND completed_at IS NULL
+      ORDER BY cycle_number DESC
+      LIMIT 1
+    `, [taskType]);
+
+    if (cycleResult.rows.length > 0) {
+      const cycle = cycleResult.rows[0];
+      if (!cycle.completed_at) {
+        // Mark as completed
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth() + 1;
+
+        await pool.query(`
+          UPDATE tracker_cycles
+          SET completed_at = $1, year = $2, month = $3, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $4
+        `, [now, year, month, cycle.id]);
+
+        console.log(`[PLANT] Cycle ${cycle.cycle_number} for ${taskType} marked as complete`);
+      }
+    }
+  }
+
+  // Get current cycle information
+  router.get('/cycles/:task_type', requireAuth, async (req, res) => {
+    try {
+      const { task_type } = req.params;
+      
+      if (!['grass_cutting', 'panel_wash'].includes(task_type)) {
+        return res.status(400).json({ error: 'Invalid task_type. Must be "grass_cutting" or "panel_wash"' });
+      }
+
+      // Calculate current progress first to check if task has started
+      const structureResult = await pool.query(`
+        SELECT structure_data FROM plant_map_structure ORDER BY version DESC LIMIT 1
+      `);
+
+      let progress = 0;
+      let doneCount = 0;
+      let halfwayCount = 0;
+      let totalCount = 0;
+
+      if (structureResult.rows.length > 0 && structureResult.rows[0].structure_data) {
+        let structure = structureResult.rows[0].structure_data;
+        if (typeof structure === 'string') {
+          structure = JSON.parse(structure);
+        }
+        const progressData = calculateProgress(structure, task_type);
+        progress = progressData.progress;
+        doneCount = progressData.doneCount;
+        halfwayCount = progressData.halfwayCount;
+        totalCount = progressData.totalCount;
+      }
+
+      // Get current incomplete cycle (if task has started)
+      const cycleResult = await pool.query(`
+        SELECT id, cycle_number, started_at, completed_at, year, month
+        FROM tracker_cycles
+        WHERE task_type = $1 AND completed_at IS NULL
+        ORDER BY cycle_number DESC
+        LIMIT 1
+      `, [task_type]);
+
+      // If no cycle exists, task hasn't started yet
+      if (cycleResult.rows.length === 0) {
+        // If progress > 0, task has started but cycle wasn't created (edge case - create it now)
+        if (progress > 0) {
+          const newCycle = await ensureCycleExists(task_type);
+          if (newCycle) {
+            return res.json({
+              cycle_number: newCycle.cycle_number,
+              started_at: newCycle.started_at,
+              completed_at: newCycle.completed_at,
+              year: newCycle.year,
+              month: newCycle.month,
+              progress: progress,
+              is_complete: progress >= 100,
+              task_started: true,
+              done_count: doneCount,
+              halfway_count: halfwayCount,
+              total_count: totalCount
+            });
+          }
+        }
+
+        // Task hasn't started yet - return null cycle
+        return res.json({
+          cycle_number: null,
+          started_at: null,
+          completed_at: null,
+          year: null,
+          month: null,
+          progress: progress,
+          is_complete: false,
+          task_started: false,
+          done_count: doneCount,
+          halfway_count: halfwayCount,
+          total_count: totalCount
+        });
+      }
+
+      const cycle = cycleResult.rows[0];
+
+      // Progress already calculated above, no need to recalculate
+      // Check if cycle should be marked as complete
+      await checkAndMarkCycleComplete(task_type, progress);
+
+      res.json({
+        cycle_number: cycle.cycle_number,
+        started_at: cycle.started_at,
+        completed_at: cycle.completed_at,
+        year: cycle.year,
+        month: cycle.month,
+        progress: progress,
+        is_complete: progress >= 100,
+        done_count: doneCount,
+        halfway_count: halfwayCount,
+        total_count: totalCount
+      });
+    } catch (error) {
+      console.error('[PLANT] Error getting cycle info:', error);
+      res.status(500).json({ error: 'Failed to get cycle information', details: error.message });
+    }
+  });
+
+  // Reset cycle (admin only)
+  router.post('/cycles/:task_type/reset', requireAuth, async (req, res) => {
+    try {
+      const { task_type } = req.params;
+      const userId = req.session.userId;
+
+      if (!['grass_cutting', 'panel_wash'].includes(task_type)) {
+        return res.status(400).json({ error: 'Invalid task_type. Must be "grass_cutting" or "panel_wash"' });
+      }
+
+      // Check if user is admin
+      const userResult = await pool.query(
+        `SELECT role, roles FROM users WHERE id = $1`,
+        [userId]
+      );
+      
+      if (userResult.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const user = userResult.rows[0];
+      const userRoles = user.roles ? (typeof user.roles === 'string' ? JSON.parse(user.roles) : user.roles) : [user.role];
+      const isAdminUser = userRoles.some(r => r === 'admin' || r === 'super_admin' || r === 'operations_admin' || r === 'system_owner') 
+        || user.role === 'admin' || user.role === 'super_admin';
+
+      if (!isAdminUser) {
+        return res.status(403).json({ error: 'Only admins can reset cycles' });
+      }
+
+      // Get current structure
+      const structureResult = await pool.query(`
+        SELECT structure_data FROM plant_map_structure ORDER BY version DESC LIMIT 1
+      `);
+
+      if (structureResult.rows.length === 0 || !structureResult.rows[0].structure_data) {
+        return res.status(404).json({ error: 'Plant map structure not found' });
+      }
+
+      let structure = structureResult.rows[0].structure_data;
+      if (typeof structure === 'string') {
+        structure = JSON.parse(structure);
+      }
+
+      // Get current cycle
+      const cycleResult = await pool.query(`
+        SELECT id, cycle_number, completed_at
+        FROM tracker_cycles
+        WHERE task_type = $1 AND completed_at IS NULL
+        ORDER BY cycle_number DESC
+        LIMIT 1
+      `, [task_type]);
+
+      if (cycleResult.rows.length === 0) {
+        return res.status(404).json({ error: 'No active cycle found' });
+      }
+
+      const currentCycle = cycleResult.rows[0];
+
+      // Mark current cycle as completed if not already
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth() + 1;
+
+      if (!currentCycle.completed_at) {
+        await pool.query(`
+          UPDATE tracker_cycles
+          SET completed_at = $1, year = $2, month = $3, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $4
+        `, [now, year, month, currentCycle.id]);
+      }
+
+      // Create new cycle
+      const newCycleNumber = currentCycle.cycle_number + 1;
+      const newCycleResult = await pool.query(`
+        INSERT INTO tracker_cycles (task_type, cycle_number, started_at, year, month, reset_by, reset_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, cycle_number, started_at, year, month
+      `, [task_type, newCycleNumber, now, year, month, userId, now]);
+
+      const newCycle = newCycleResult.rows[0];
+
+      // Reset all tracker colors to white for this task type
+      const colorKey = task_type === 'grass_cutting' ? 'grassCuttingColor' : 'panelWashColor';
+      structure.forEach(tracker => {
+        if (tracker.id && tracker.id.startsWith('M') && /^M\d{2}$/.test(tracker.id)) {
+          tracker[colorKey] = '#ffffff';
+        }
+      });
+
+      // Save updated structure
+      const currentVersionResult = await pool.query(`
+        SELECT version FROM plant_map_structure ORDER BY version DESC LIMIT 1
+      `);
+      const newVersion = currentVersionResult.rows.length > 0 
+        ? currentVersionResult.rows[0].version + 1 
+        : 1;
+
+      await pool.query(`
+        INSERT INTO plant_map_structure (structure_data, version)
+        VALUES ($1, $2)
+      `, [JSON.stringify(structure), newVersion]);
+
+      console.log(`[PLANT] Cycle reset: ${task_type} cycle ${currentCycle.cycle_number} -> ${newCycleNumber} by user ${userId}`);
+
+      res.json({
+        success: true,
+        new_cycle_number: newCycle.cycle_number,
+        previous_cycle_number: currentCycle.cycle_number,
+        started_at: newCycle.started_at,
+        year: newCycle.year,
+        month: newCycle.month
+      });
+    } catch (error) {
+      console.error('[PLANT] Error resetting cycle:', error);
+      res.status(500).json({ error: 'Failed to reset cycle', details: error.message });
+    }
+  });
+
+  // Get cycle history
+  router.get('/cycles/:task_type/history', requireAuth, async (req, res) => {
+    try {
+      const { task_type } = req.params;
+      const { year, month } = req.query;
+
+      if (!['grass_cutting', 'panel_wash'].includes(task_type)) {
+        return res.status(400).json({ error: 'Invalid task_type. Must be "grass_cutting" or "panel_wash"' });
+      }
+
+      let query = `
+        SELECT 
+          tc.id,
+          tc.cycle_number,
+          tc.started_at,
+          tc.completed_at,
+          tc.reset_at,
+          tc.year,
+          tc.month,
+          tc.notes,
+          u.full_name as reset_by_name,
+          u.username as reset_by_username,
+          EXTRACT(EPOCH FROM (tc.completed_at - tc.started_at)) / 86400 as duration_days
+        FROM tracker_cycles tc
+        LEFT JOIN users u ON tc.reset_by = u.id
+        WHERE tc.task_type = $1
+      `;
+      const params = [task_type];
+
+      if (year) {
+        query += ` AND tc.year = $${params.length + 1}`;
+        params.push(parseInt(year, 10));
+      }
+
+      if (month) {
+        query += ` AND tc.month = $${params.length + 1}`;
+        params.push(parseInt(month, 10));
+      }
+
+      query += ` ORDER BY tc.year DESC, tc.month DESC, tc.cycle_number DESC`;
+
+      const result = await pool.query(query, params);
+
+      const cycles = result.rows.map(row => ({
+        id: row.id,
+        cycle_number: row.cycle_number,
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+        reset_at: row.reset_at,
+        year: row.year,
+        month: row.month,
+        month_name: new Date(2000, row.month - 1, 1).toLocaleString('default', { month: 'long' }),
+        duration_days: row.duration_days ? Math.round(row.duration_days * 10) / 10 : null,
+        reset_by: row.reset_by_name ? {
+          name: row.reset_by_name,
+          username: row.reset_by_username
+        } : null,
+        notes: row.notes
+      }));
+
+      // Calculate summary
+      const summary = {
+        total_cycles: cycles.length,
+        by_month: {}
+      };
+
+      cycles.forEach(cycle => {
+        if (!summary.by_month[cycle.month]) {
+          summary.by_month[cycle.month] = 0;
+        }
+        summary.by_month[cycle.month]++;
+      });
+
+      res.json({ cycles, summary });
+    } catch (error) {
+      console.error('[PLANT] Error getting cycle history:', error);
+      res.status(500).json({ error: 'Failed to get cycle history', details: error.message });
+    }
+  });
+
+  // Get cycle statistics
+  router.get('/cycles/:task_type/stats', requireAuth, async (req, res) => {
+    try {
+      const { task_type } = req.params;
+      const { year } = req.query;
+
+      if (!['grass_cutting', 'panel_wash'].includes(task_type)) {
+        return res.status(400).json({ error: 'Invalid task_type. Must be "grass_cutting" or "panel_wash"' });
+      }
+
+      const targetYear = year ? parseInt(year, 10) : new Date().getFullYear();
+
+      // Get cycles for the year
+      const cyclesResult = await pool.query(`
+        SELECT 
+          cycle_number,
+          started_at,
+          completed_at,
+          year,
+          month,
+          EXTRACT(EPOCH FROM (completed_at - started_at)) / 86400 as duration_days
+        FROM tracker_cycles
+        WHERE task_type = $1 AND year = $2 AND completed_at IS NOT NULL
+        ORDER BY month, cycle_number
+      `, [task_type, targetYear]);
+
+      const cycles = cyclesResult.rows;
+      const totalCycles = cycles.length;
+
+      // Calculate average duration
+      const completedCycles = cycles.filter(c => c.duration_days !== null);
+      const avgDuration = completedCycles.length > 0
+        ? completedCycles.reduce((sum, c) => sum + parseFloat(c.duration_days), 0) / completedCycles.length
+        : 0;
+
+      // Group by month
+      const cyclesByMonth = {};
+      cycles.forEach(cycle => {
+        if (!cyclesByMonth[cycle.month]) {
+          cyclesByMonth[cycle.month] = {
+            month: cycle.month,
+            month_name: new Date(2000, cycle.month - 1, 1).toLocaleString('default', { month: 'long' }),
+            count: 0,
+            cycles: [],
+            avg_duration: 0
+          };
+        }
+        cyclesByMonth[cycle.month].count++;
+        cyclesByMonth[cycle.month].cycles.push(cycle.cycle_number);
+        if (cycle.duration_days) {
+          cyclesByMonth[cycle.month].avg_duration += parseFloat(cycle.duration_days);
+        }
+      });
+
+      // Calculate averages per month
+      Object.keys(cyclesByMonth).forEach(month => {
+        const monthData = cyclesByMonth[month];
+        const monthCyclesWithDuration = monthData.cycles.length;
+        monthData.avg_duration = monthCyclesWithDuration > 0
+          ? monthData.avg_duration / monthCyclesWithDuration
+          : 0;
+        monthData.first_cycle = Math.min(...monthData.cycles);
+        monthData.last_cycle = Math.max(...monthData.cycles);
+      });
+
+      // Find peak month
+      let peakMonth = null;
+      let maxCycles = 0;
+      Object.values(cyclesByMonth).forEach(monthData => {
+        if (monthData.count > maxCycles) {
+          maxCycles = monthData.count;
+          peakMonth = monthData;
+        }
+      });
+
+      res.json({
+        year: targetYear,
+        task_type: task_type,
+        total_cycles: totalCycles,
+        average_cycle_duration_days: Math.round(avgDuration * 10) / 10,
+        cycles_by_month: Object.values(cyclesByMonth).sort((a, b) => a.month - b.month),
+        monthly_summary: cyclesByMonth,
+        peak_month: peakMonth
+      });
+    } catch (error) {
+      console.error('[PLANT] Error getting cycle stats:', error);
+      res.status(500).json({ error: 'Failed to get cycle statistics', details: error.message });
     }
   });
 

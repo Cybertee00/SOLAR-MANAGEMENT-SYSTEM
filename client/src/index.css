@@ -375,21 +375,19 @@ h3 {
 .error {
   color: var(--md-error);
   font-size: 14px;
-  margin-top: 8px;
-  padding: 12px;
-  background: rgba(244, 67, 53, 0.1);
-  border-radius: var(--md-radius-md);
-  border-left: 4px solid var(--md-error);
+  margin: 4px 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
 }
 
 .success {
   color: var(--md-success);
   font-size: 14px;
-  margin-top: 8px;
-  padding: 12px;
-  background: rgba(76, 175, 80, 0.1);
-  border-radius: var(--md-radius-md);
-  border-left: 4px solid var(--md-success);
+  margin: 8px 0;
+  background: transparent;
 }
 
 .loading {
@@ -627,16 +625,28 @@ table td {
   box-shadow: var(--md-shadow-sm);
 }
 
-.alert-error {
-  background: rgba(244, 67, 53, 0.1);
+.alert-error,
+.alert.alert-error {
   color: var(--md-error);
-  border-color: rgba(244, 67, 53, 0.3);
+  font-size: 14px;
+  margin: 4px 0;
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
 }
 
-.alert-success {
-  background: rgba(76, 175, 80, 0.1);
+.alert-success,
+.alert.alert-success {
   color: var(--md-success);
-  border-color: rgba(76, 175, 80, 0.3);
+  font-size: 14px;
+  margin: 4px 0;
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
 }
 
 /* User Action Dropdown - Desktop */
@@ -992,8 +1002,12 @@ table td {
 
   .error {
     font-size: 13px;
-    padding: 10px 12px;
-    border-radius: var(--md-radius-md);
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    margin: 4px 0;
   }
 
   .success {

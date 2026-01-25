@@ -10,6 +10,7 @@ import jsPDF from 'jspdf';
  *   - halfwayCount: number of trackers marked as halfway
  *   - notDoneCount: number of trackers not done
  *   - totalTrackers: total number of trackers
+ *   - cycleNumber: current cycle number (optional)
  * @param {string} viewMode - 'grass_cutting' or 'panel_wash'
  * @param {string} filename - Optional filename (defaults to auto-generated)
  */
@@ -113,10 +114,11 @@ export async function generatePlantMapReport(mapElement, stats, viewMode, filena
     pdf.text(`Overall Progress: ${stats.progress.toFixed(1)}%`, margin, yPos);
     yPos += 8;
     
-    // Tracker counts
+    // Tracker counts with cycle number
     pdf.setFontSize(10);
     pdf.setFont('helvetica', 'normal');
-    pdf.text(`Total Trackers: ${stats.totalTrackers}`, margin, yPos);
+    const cycleText = stats.cycleNumber ? ` | Cycle: ${stats.cycleNumber}` : '';
+    pdf.text(`Total Trackers: ${stats.totalTrackers}${cycleText}`, margin, yPos);
     yPos += 7;
     
     // Done count

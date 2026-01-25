@@ -20,7 +20,24 @@ module.exports = (pool) => {
     const items = parsed.items || [];
 
     let upserts = 0;
+    let skipped = 0;
     for (const item of items) {
+      // Skip invalid items: item_code is "0" or empty, or description is "0"
+      if (!item.item_code || item.item_code.trim() === '' || item.item_code === '0' || item.item_description === '0') {
+        skipped++;
+        continue;
+      }
+      
+      // Skip items where all fields are zeros (invalid data)
+      if (item.item_code === '0' && 
+          (item.item_description === '0' || !item.item_description) && 
+          (!item.part_type || item.part_type === '0') &&
+          (!item.min_level || item.min_level === 0) &&
+          (!item.actual_qty || item.actual_qty === 0)) {
+        skipped++;
+        continue;
+      }
+
       await pool.query(
         `INSERT INTO inventory_items (section, item_code, item_description, part_type, min_level, actual_qty)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -35,6 +52,10 @@ module.exports = (pool) => {
         [item.section || null, item.item_code, item.item_description || null, item.part_type || null, item.min_level || 0, item.actual_qty || 0]
       );
       upserts++;
+    }
+    
+    if (skipped > 0) {
+      console.log(`[INVENTORY] Skipped ${skipped} invalid item(s) during sync`);
     }
 
     return { message: 'Imported inventory from Excel', items: upserts, file: parsed.filePath };
@@ -61,17 +82,8 @@ module.exports = (pool) => {
         try {
           await syncInventoryFromExcel();
           lastSyncedMtimeMs = mtimeMs;
-        } catch (syncError) {
-          // Log error but don't throw - allow inventory reads to continue
-          console.error('[INVENTORY] Error syncing from Excel:', syncError.message);
-          console.error('[INVENTORY] Sync error stack:', syncError.stack);
-          // Reset syncInFlight so it can be retried on next request
-          syncInFlight = null;
-          throw syncError; // Re-throw so caller knows sync failed
         } finally {
-          if (syncInFlight) {
-            syncInFlight = null;
-          }
+          syncInFlight = null;
         }
       })();
     }
@@ -87,15 +99,14 @@ module.exports = (pool) => {
   // List inventory items
   router.get('/items', requireAuth, async (req, res) => {
     try {
-      // Try to sync from Excel, but don't fail if sync fails
+      // Wrap sync in try-catch to prevent it from breaking the entire endpoint
       try {
         await ensureInventorySyncedIfNeeded();
       } catch (syncError) {
-        // Log sync error but continue - we can still return existing DB data
-        console.error('[INVENTORY] Sync error (non-fatal):', syncError.message);
-        // Continue to fetch from database even if sync failed
+        console.error('[INVENTORY] Error syncing from Excel (non-fatal):', syncError.message);
+        // Continue even if sync fails - use existing DB data
       }
-
+      
       const lowStock = String(req.query.low_stock || '').toLowerCase() === 'true';
       const q = String(req.query.q || '').trim();
 
@@ -119,13 +130,8 @@ module.exports = (pool) => {
       
       res.json(filteredItems);
     } catch (e) {
-      console.error('[INVENTORY] Error fetching inventory items:', e);
-      console.error('[INVENTORY] Error stack:', e.stack);
-      res.status(500).json({ 
-        error: 'Failed to fetch inventory items', 
-        details: e.message,
-        code: e.code
-      });
+      console.error('[INVENTORY] Error in GET /items:', e);
+      res.status(500).json({ error: 'Service unavailable' });
     }
   });
 
@@ -142,7 +148,8 @@ module.exports = (pool) => {
       }
       res.json(out);
     } catch (e) {
-      res.status(500).json({ error: 'Failed to import inventory from Excel', details: e.message });
+      console.error('[INVENTORY] Error in POST /import:', e);
+      res.status(500).json({ error: 'Import failed' });
     }
   });
 
@@ -175,19 +182,11 @@ module.exports = (pool) => {
       console.log('[INVENTORY] File sent successfully');
     } catch (e) {
       console.error('[INVENTORY] Error exporting inventory to Excel:', e);
-      console.error('[INVENTORY] Error stack:', e.stack);
-      console.error('[INVENTORY] Error details:', {
-        message: e.message,
-        code: e.code,
-        path: e.path
-      });
       
       // Send error response
       if (!res.headersSent) {
         res.status(500).json({ 
-          error: 'Failed to export inventory to Excel', 
-          details: e.message,
-          code: e.code || 'UNKNOWN_ERROR'
+          error: 'Export failed'
         });
       }
     }
@@ -198,22 +197,22 @@ module.exports = (pool) => {
     const client = await pool.connect();
     try {
       const { item_code, qty_change, note, tx_type } = req.body || {};
-      if (!item_code) return res.status(400).json({ error: 'item_code is required' });
+      if (!item_code) return res.status(400).json({ error: 'Item code required' });
       const delta = parseInt(qty_change, 10);
-      if (!Number.isFinite(delta) || delta === 0) return res.status(400).json({ error: 'qty_change must be a non-zero integer' });
+      if (!Number.isFinite(delta) || delta === 0) return res.status(400).json({ error: 'Invalid quantity' });
 
       await client.query('BEGIN');
       const itemRes = await client.query('SELECT * FROM inventory_items WHERE item_code = $1 FOR UPDATE', [item_code]);
       if (itemRes.rows.length === 0) {
         await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'Inventory item not found' });
+        return res.status(404).json({ error: 'Not found' });
       }
 
       const item = itemRes.rows[0];
       const newQty = (item.actual_qty || 0) + delta;
       if (newQty < 0) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Insufficient stock', available: item.actual_qty, requested_change: delta });
+        return res.status(400).json({ error: 'Insufficient stock' });
       }
 
       await client.query(
@@ -235,7 +234,8 @@ module.exports = (pool) => {
       res.json({ item_code, actual_qty: newQty });
     } catch (e) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: 'Failed to adjust inventory', details: e.message });
+      console.error('[INVENTORY] Error in POST /adjust:', e);
+      res.status(500).json({ error: 'Update failed' });
     } finally {
       client.release();
     }
@@ -247,8 +247,8 @@ module.exports = (pool) => {
     const client = await pool.connect();
     try {
       const { task_id, items } = req.body || {};
-      if (!task_id) return res.status(400).json({ error: 'task_id is required' });
-      if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items[] is required' });
+      if (!task_id) return res.status(400).json({ error: 'Task ID required' });
+      if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'Items required' });
 
       await client.query('BEGIN');
 
@@ -268,7 +268,7 @@ module.exports = (pool) => {
         const qty = parseInt(line.qty_used, 10);
         if (!code || !Number.isFinite(qty) || qty <= 0) {
           await client.query('ROLLBACK');
-          return res.status(400).json({ error: 'Each item must have item_code and qty_used > 0' });
+          return res.status(400).json({ error: 'Invalid item data' });
         }
 
         const itemRes = await client.query(
@@ -277,14 +277,14 @@ module.exports = (pool) => {
         );
         if (itemRes.rows.length === 0) {
           await client.query('ROLLBACK');
-          return res.status(404).json({ error: `Inventory item not found: ${code}` });
+          return res.status(404).json({ error: 'Not found' });
         }
 
         const item = itemRes.rows[0];
         const available = item.actual_qty || 0;
         if (available - qty < 0) {
           await client.query('ROLLBACK');
-          return res.status(400).json({ error: `Insufficient stock for ${code}`, available, requested: qty });
+          return res.status(400).json({ error: 'Insufficient stock' });
         }
 
         const newQty = available - qty;
@@ -313,7 +313,8 @@ module.exports = (pool) => {
       res.status(201).json({ slip, updated_items: updates });
     } catch (e) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: 'Failed to consume spares', details: e.message });
+      console.error('[INVENTORY] Error in POST /consume:', e);
+      res.status(500).json({ error: 'Consume failed' });
     } finally {
       client.release();
     }
@@ -331,18 +332,20 @@ module.exports = (pool) => {
       );
       res.json(result.rows);
     } catch (e) {
-      res.status(500).json({ error: 'Failed to fetch slips', details: e.message });
+      console.error('[INVENTORY] Error in GET /slips:', e);
+      res.status(500).json({ error: 'Service unavailable' });
     }
   });
 
   router.get('/slips/:id', requireAuth, async (req, res) => {
     try {
       const slipRes = await pool.query('SELECT * FROM inventory_slips WHERE id = $1', [req.params.id]);
-      if (slipRes.rows.length === 0) return res.status(404).json({ error: 'Slip not found' });
+      if (slipRes.rows.length === 0) return res.status(404).json({ error: 'Not found' });
       const linesRes = await pool.query('SELECT * FROM inventory_slip_lines WHERE slip_id = $1 ORDER BY created_at ASC', [req.params.id]);
       res.json({ slip: slipRes.rows[0], lines: linesRes.rows });
     } catch (e) {
-      res.status(500).json({ error: 'Failed to fetch slip', details: e.message });
+      console.error('[INVENTORY] Error in GET /slips/:id:', e);
+      res.status(500).json({ error: 'Service unavailable' });
     }
   });
 
@@ -352,13 +355,24 @@ module.exports = (pool) => {
       const { section, item_code, item_description, part_type, min_level, actual_qty } = req.body;
       
       if (!item_code) {
-        return res.status(400).json({ error: 'item_code is required' });
+        return res.status(400).json({ error: 'Item code required' });
+      }
+
+      // Validate: reject invalid item codes
+      const trimmedCode = String(item_code || '').trim();
+      if (!trimmedCode || trimmedCode === '0') {
+        return res.status(400).json({ error: 'Invalid item code' });
+      }
+
+      // Validate: reject invalid descriptions
+      if (item_description === '0') {
+        return res.status(400).json({ error: 'Invalid description' });
       }
 
       // Check if item_code already exists
-      const existing = await pool.query('SELECT id FROM inventory_items WHERE item_code = $1', [item_code]);
+      const existing = await pool.query('SELECT id FROM inventory_items WHERE item_code = $1', [trimmedCode]);
       if (existing.rows.length > 0) {
-        return res.status(400).json({ error: 'Item code already exists' });
+        return res.status(400).json({ error: 'Already exists' });
       }
 
       const result = await pool.query(
@@ -367,7 +381,7 @@ module.exports = (pool) => {
          RETURNING *`,
         [
           section || null,
-          item_code,
+          trimmedCode,
           item_description || null,
           part_type || null,
           min_level || 0,
@@ -378,9 +392,10 @@ module.exports = (pool) => {
       res.status(201).json(result.rows[0]);
     } catch (e) {
       if (e.code === '23505') { // Unique violation
-        res.status(400).json({ error: 'Item code already exists' });
+        res.status(400).json({ error: 'Already exists' });
       } else {
-        res.status(500).json({ error: 'Failed to create inventory item', details: e.message });
+        console.error('[INVENTORY] Error in POST /items:', e);
+        res.status(500).json({ error: 'Create failed' });
       }
     }
   });
@@ -481,9 +496,10 @@ module.exports = (pool) => {
       await client.query('ROLLBACK').catch(() => {});
       await client.release();
       if (e.code === '23505') { // Unique violation
-        res.status(400).json({ error: 'Item code already exists' });
+        res.status(400).json({ error: 'Already exists' });
       } else {
-        res.status(500).json({ error: 'Failed to update inventory item', details: e.message });
+        console.error('[INVENTORY] Error in PUT /items/:item_code:', e);
+        res.status(500).json({ error: 'Update failed' });
       }
     }
   });
@@ -538,7 +554,8 @@ module.exports = (pool) => {
 
       res.json(result.rows);
     } catch (e) {
-      res.status(500).json({ error: 'Failed to fetch spares usage', details: e.message });
+      console.error('[INVENTORY] Error in GET /usage:', e);
+      res.status(500).json({ error: 'Service unavailable' });
     }
   });
 

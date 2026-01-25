@@ -48,7 +48,27 @@ async function setupDatabase() {
     await appPool.query(schema);
     console.log('Schema created successfully');
 
-    // Run migrations
+    // Run SaaS migrations FIRST (required for multi-tenancy)
+    const saasMigrations = [
+      'saas_001_create_organizations.sql',
+      'saas_002_create_subscription_tiers.sql',
+      'saas_003_add_organization_id.sql',
+      'saas_004_create_user_invitations.sql'
+    ];
+    
+    console.log('Running SaaS migrations...');
+    for (const migrationFile of saasMigrations) {
+      const migrationPath = path.join(__dirname, '../db/migrations', migrationFile);
+      if (fs.existsSync(migrationPath)) {
+        const migration = fs.readFileSync(migrationPath, 'utf8');
+        await appPool.query(migration);
+        console.log(`SaaS Migration ${migrationFile} applied successfully`);
+      } else {
+        console.log(`Warning: SaaS migration ${migrationFile} not found`);
+      }
+    }
+
+    // Run other migrations
     const migrations = [
       'create_platform_migrations_table.sql',
       'create_platform_updates_table.sql',
@@ -56,7 +76,6 @@ async function setupDatabase() {
       'add_task_metadata.sql',
       'add_draft_responses.sql',
       'add_draft_images.sql',
-      'add_feedback_table.sql',
       'add_draft_spares_used.sql',
       'add_password_to_users.sql',
       'add_api_tokens_and_webhooks.sql',
@@ -78,7 +97,7 @@ async function setupDatabase() {
       }
     }
 
-    // Seed initial data
+    // Seed initial data (will use default organization created by saas_003)
     await seedInitialData(appPool);
     console.log('Initial data seeded successfully');
 
@@ -94,42 +113,54 @@ async function seedInitialData(pool) {
   const bcrypt = require('bcrypt');
   const saltRounds = 10;
 
-  // Create default admin user with password
+  // Get default organization ID (created by saas_003 migration)
+  const defaultOrgResult = await pool.query(`
+    SELECT id FROM organizations WHERE slug = 'default-org' LIMIT 1
+  `);
+  
+  if (defaultOrgResult.rows.length === 0) {
+    throw new Error('Default organization not found. Please run SaaS migrations first.');
+  }
+  
+  const defaultOrgId = defaultOrgResult.rows[0].id;
+  console.log(`Using default organization: ${defaultOrgId}`);
+
+  // Create default admin user with password (assigned to default organization)
   const adminPassword = await bcrypt.hash('tech1', saltRounds);
   const adminUser = await pool.query(`
-    INSERT INTO users (username, email, full_name, role, password_hash, is_active)
-    VALUES ('admin', 'admin@solarom.com', 'System Administrator', 'admin', $1, true)
-    ON CONFLICT (username) DO UPDATE SET password_hash = $1, is_active = true
+    INSERT INTO users (username, email, full_name, role, password_hash, is_active, organization_id)
+    VALUES ('admin', 'admin@solarom.com', 'System Administrator', 'admin', $1, true, $2)
+    ON CONFLICT (username) DO UPDATE SET password_hash = $1, is_active = true, organization_id = $2
     RETURNING id
-  `, [adminPassword]);
+  `, [adminPassword, defaultOrgId]);
 
-  // Create default technician user with password
+  // Create default technician user with password (assigned to default organization)
   const techPassword = await bcrypt.hash('tech123', saltRounds);
   const techUser = await pool.query(`
-    INSERT INTO users (username, email, full_name, role, password_hash, is_active)
-    VALUES ('tech1', 'tech1@solarom.com', 'John Technician', 'technician', $1, true)
-    ON CONFLICT (username) DO UPDATE SET password_hash = $1, is_active = true
+    INSERT INTO users (username, email, full_name, role, password_hash, is_active, organization_id)
+    VALUES ('tech1', 'tech1@solarom.com', 'John Technician', 'technician', $1, true, $2)
+    ON CONFLICT (username) DO UPDATE SET password_hash = $1, is_active = true, organization_id = $2
     RETURNING id
-  `, [techPassword]);
+  `, [techPassword, defaultOrgId]);
 
   console.log('Default users created:');
   console.log('  Admin: username=admin, password=tech1');
   console.log('  Technician: username=tech1, password=tech123');
 
-  // Create sample Weather Station asset
+  // Create sample Weather Station asset (assigned to default organization)
   const weatherStation = await pool.query(`
-    INSERT INTO assets (asset_code, asset_name, asset_type, location, status)
-    VALUES ('WS-001', 'Weather Station 1', 'weather_station', 'Main Plant Area', 'active')
+    INSERT INTO assets (asset_code, asset_name, asset_type, location, status, organization_id)
+    VALUES ('WS-001', 'Weather Station 1', 'weather_station', 'Main Plant Area', 'active', $1)
     ON CONFLICT (asset_code) DO NOTHING
     RETURNING id
-  `);
+  `, [defaultOrgId]);
 
-  // Create sample Energy Meter asset (for PM-14 checklist)
+  // Create sample Energy Meter asset (for PM-14 checklist) (assigned to default organization)
   await pool.query(`
-    INSERT INTO assets (asset_code, asset_name, asset_type, location, status)
-    VALUES ('EM-001', 'CT Building Energy Meter 1', 'energy_meter', 'CT Building', 'active')
+    INSERT INTO assets (asset_code, asset_name, asset_type, location, status, organization_id)
+    VALUES ('EM-001', 'CT Building Energy Meter 1', 'energy_meter', 'CT Building', 'active', $1)
     ON CONFLICT (asset_code) DO NOTHING
-  `);
+  `, [defaultOrgId]);
 
   // Create Weather Station checklist template based on PM 013 procedure
   // This matches the actual checklist structure from Checksheets/WEATHER STATION.docx
@@ -482,7 +513,8 @@ async function seedInitialData(pool) {
       frequency,
       checklist_structure, 
       validation_rules, 
-      cm_generation_rules
+      cm_generation_rules,
+      organization_id
     )
     VALUES (
       'WS-PM-013',
@@ -493,16 +525,19 @@ async function seedInitialData(pool) {
       'monthly',
       $1::jsonb,
       $2::jsonb,
-      $3::jsonb
+      $3::jsonb,
+      $4
     )
     ON CONFLICT (template_code) DO UPDATE SET
       checklist_structure = EXCLUDED.checklist_structure,
       validation_rules = EXCLUDED.validation_rules,
-      cm_generation_rules = EXCLUDED.cm_generation_rules
+      cm_generation_rules = EXCLUDED.cm_generation_rules,
+      organization_id = EXCLUDED.organization_id
   `, [
     JSON.stringify(weatherStationChecklist),
     JSON.stringify(validationRules),
-    JSON.stringify(cmGenerationRules)
+    JSON.stringify(cmGenerationRules),
+    defaultOrgId
   ]);
 
   console.log('Weather Station checklist template created');
@@ -631,7 +666,8 @@ async function seedInitialData(pool) {
       frequency,
       checklist_structure,
       validation_rules,
-      cm_generation_rules
+      cm_generation_rules,
+      organization_id
     )
     VALUES (
       'EM-PM-14',
@@ -642,16 +678,19 @@ async function seedInitialData(pool) {
       'monthly',
       $1::jsonb,
       $2::jsonb,
-      $3::jsonb
+      $3::jsonb,
+      $4
     )
     ON CONFLICT (template_code) DO UPDATE SET
       checklist_structure = EXCLUDED.checklist_structure,
       validation_rules = EXCLUDED.validation_rules,
-      cm_generation_rules = EXCLUDED.cm_generation_rules
+      cm_generation_rules = EXCLUDED.cm_generation_rules,
+      organization_id = EXCLUDED.organization_id
   `, [
     JSON.stringify(energyMeterChecklist),
     JSON.stringify(energyMeterValidationRules),
-    JSON.stringify(energyMeterCmRules)
+    JSON.stringify(energyMeterCmRules),
+    defaultOrgId
   ]);
 
   console.log('Energy Meter checklist template created');

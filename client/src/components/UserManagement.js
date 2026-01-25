@@ -142,7 +142,7 @@ function UserManagement() {
       setShowForm(false);
       loadUsers();
     } catch (error) {
-      setError(error.response?.data?.error || 'Failed to save user');
+      setError(getErrorMessage(error, 'Failed to save user'));
     }
   };
 
@@ -205,7 +205,7 @@ function UserManagement() {
       loadUsers();
       setError('');
     } catch (error) {
-      setError(error.response?.data?.error || 'Failed to update user roles');
+      setError(getErrorMessage(error, 'Failed to update user roles'));
     }
   };
 
@@ -248,7 +248,8 @@ function UserManagement() {
       loadUsers();
       setError(''); // Clear any previous errors
     } catch (error) {
-      setError(error.response?.data?.error || `Failed to ${action} user`);
+      const { getErrorMessage } = require('../utils/errorHandler');
+      setError(getErrorMessage(error, `Failed to ${action} user`));
     }
   };
 
@@ -262,7 +263,8 @@ function UserManagement() {
       loadUsers();
       setError(''); // Clear any previous errors
     } catch (error) {
-      setError(error.response?.data?.error || 'Failed to delete user');
+      const { getErrorMessage } = require('../utils/errorHandler');
+      setError(getErrorMessage(error, 'Failed to delete user'));
     }
   };
 

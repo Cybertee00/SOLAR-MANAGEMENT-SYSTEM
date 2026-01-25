@@ -94,7 +94,6 @@ function AppContent() {
       <OfflineIndicator />
       {!showPasswordModal && <Header />}
       {!showPasswordModal && <LicenseStatus />}
-      {!showPasswordModal && <FeedbackWidget />}
       <PasswordChangeModal
         isOpen={showPasswordModal}
         onClose={handleModalClose}
@@ -105,6 +104,7 @@ function AppContent() {
         timeRemaining={timeRemaining}
         onExtendSession={extendSession}
       />
+      {user && !showPasswordModal && <FeedbackWidget />}
       <div className="container">
         <Routes>
           <Route path="/login" element={<Login />} />

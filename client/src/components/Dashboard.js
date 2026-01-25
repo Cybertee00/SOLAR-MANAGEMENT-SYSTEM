@@ -8,6 +8,7 @@ import {
   getInventoryItems 
 } from '../api/api';
 import './Dashboard.css';
+import sieLogo from '../assets/SIE_logo.png';
 import { 
   Chart as ChartJS, 
   ArcElement, 
@@ -466,6 +467,34 @@ function Dashboard() {
     };
   };
 
+  // Spares Inventory Chart Data - Only Low Stock and Out of Stock
+  const getSparesInventoryChartData = () => {
+    const { lowStock, outOfStock } = inventoryStats;
+
+    return {
+      labels: ['Out of Stock', 'Low Stock'],
+      datasets: [{
+        label: 'Items',
+        data: [outOfStock, lowStock],
+        backgroundColor: (context) => {
+          const chart = context.chart;
+          const {ctx, chartArea} = chart;
+          // Horizontal gradients for bar chart - left to right flow
+          const gradients = [
+            // Out of Stock: Red gradient
+            createHorizontalGradient(ctx, chartArea, '#B71C1C', '#EF5350'),
+            // Low Stock: Orange gradient
+            createHorizontalGradient(ctx, chartArea, '#E65100', '#FF9800')
+          ];
+          return gradients[context.dataIndex] || '#9E9E9E';
+        },
+        borderColor: '#ffffff',
+        borderWidth: 2,
+        borderRadius: 8,
+      }],
+    };
+  };
+
   const chartOptions = {
     responsive: true,
     maintainAspectRatio: true,
@@ -658,7 +687,10 @@ function Dashboard() {
 
   return (
     <div className="dashboard-container">
-      <h2 className="dashboard-header">Dashboard</h2>
+      <div className="dashboard-header">
+        <img src={sieLogo} alt="SIE Logo" className="dashboard-logo" />
+        <h2 className="dashboard-title">Dashboard</h2>
+      </div>
       
       {/* Stat Cards */}
       <div className="dashboard-stats">
@@ -850,26 +882,53 @@ function Dashboard() {
             </div>
           </div>
 
-          {/* Spares Inventory Status - Numbers Only */}
+          {/* Spares Inventory Status - Bar Chart */}
           <div className="dashboard-card spares-card">
             <div className="card-header">
               <h3>Spares Inventory Status</h3>
             </div>
-            <div className="spares-numbers-container">
-              <div className="inventory-summary">
-                <div className="inventory-summary-item">
-                  <span className="summary-label">In Stock:</span>
-                  <span className="summary-value">{inventoryStats.inStock}</span>
-                </div>
-                <div className="inventory-summary-item">
-                  <span className="summary-label">Low Stock:</span>
-                  <span className="summary-value warning">{inventoryStats.lowStock}</span>
-                </div>
-                <div className="inventory-summary-item">
-                  <span className="summary-label">Out of Stock:</span>
-                  <span className="summary-value error">{inventoryStats.outOfStock}</span>
-                </div>
-              </div>
+            <div className="spares-chart-container">
+              <Bar
+                data={getSparesInventoryChartData()}
+                options={{
+                  ...barChartOptions,
+                  scales: {
+                    ...barChartOptions.scales,
+                    x: {
+                      ...barChartOptions.scales.x,
+                      max: Math.max(
+                        Math.ceil((inventoryStats.outOfStock + inventoryStats.lowStock) * 1.2),
+                        10
+                      ),
+                    },
+                  },
+                }}
+                plugins={[{
+                  id: 'barValuePlugin',
+                  afterDatasetsDraw: (chart) => {
+                    const ctx = chart.ctx;
+                    const meta = chart.getDatasetMeta(0);
+                    
+                    meta.data.forEach((bar, index) => {
+                      const value = chart.data.datasets[0].data[index];
+                      if (value > 0) {
+                        const x = bar.x / 2;
+                        const y = bar.y;
+                        
+                        ctx.save();
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = 'bold 13px Roboto, sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                        ctx.shadowBlur = 2;
+                        ctx.fillText(value.toString(), x, y);
+                        ctx.restore();
+                      }
+                    });
+                  }
+                }]}
+              />
             </div>
             <div className="card-footer">
               <Link to="/inventory" className="view-button">View</Link>

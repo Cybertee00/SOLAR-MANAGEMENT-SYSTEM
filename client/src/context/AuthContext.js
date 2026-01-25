@@ -67,7 +67,7 @@ export const AuthProvider = ({ children }) => {
       
       return { 
         success: false, 
-        error: getErrorMessage(error, 'Login failed'),
+        error: getErrorMessage(error, 'Incorrect password'),
         admin_email: error.response?.data?.admin_email
       };
     }

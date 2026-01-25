@@ -531,8 +531,7 @@ app.use('/api/license', licenseRoutes(pool));
 app.use('/api', syncRoutes(pool));
 app.use('/api/overtime-requests', licenseCheck, overtimeRequestsRoutes(pool));
 app.use('/api/plant', licenseCheck, plantRoutes(pool));
-// Feedback route (accessible without license check - users can submit feedback anytime)
-app.use('/api/feedback', feedbackRoutes(pool));
+app.use('/api/feedback', licenseCheck, feedbackRoutes(pool));
 
 // Versioned API (v1) - mirrors /api for integration stability
 app.use('/api/v1/auth', authRoutes(pool));

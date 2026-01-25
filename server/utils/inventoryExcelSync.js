@@ -29,7 +29,29 @@ function findHeaderRowAndColumns(worksheet) {
   // A: Section, B: Item Code, C: Item Description, D: Part Type, E: MinLevel, F: Actual Qty
   const expected = ['section', 'item code', 'item description', 'part type', 'minlevel', 'actual qty'];
 
-  for (let r = 1; r <= Math.min(50, worksheet.rowCount || 50); r++) {
+  // Search for header row - check rows 1-10 first (most common locations)
+  for (let r = 1; r <= Math.min(10, worksheet.rowCount || 10); r++) {
+    const row = worksheet.getRow(r);
+    const values = [];
+    for (let c = 1; c <= 12; c++) {
+      const v = row.getCell(c).value;
+      if (typeof v === 'string' || typeof v === 'number') values.push(normalizeHeader(v));
+      else values.push(normalizeHeader(v?.text || ''));
+    }
+
+    const hits = expected.filter(h => values.includes(h));
+    // Require at least 4 matching headers to confirm it's the header row
+    if (hits.length >= 4) {
+      const colMap = {};
+      values.forEach((v, idx) => {
+        if (expected.includes(v)) colMap[v] = idx + 1;
+      });
+      return { headerRow: r, colMap };
+    }
+  }
+
+  // Extended search if not found in first 10 rows (up to row 50)
+  for (let r = 11; r <= Math.min(50, worksheet.rowCount || 50); r++) {
     const row = worksheet.getRow(r);
     const values = [];
     for (let c = 1; c <= 12; c++) {
@@ -48,7 +70,8 @@ function findHeaderRowAndColumns(worksheet) {
     }
   }
 
-  // Fallback to known fixed columns (from analysis row 4)
+  // Fallback to known fixed columns (from analysis: row 4 in Inventory Count.xlsx)
+  // This matches the actual template structure
   return {
     headerRow: 4,
     colMap: {
@@ -120,8 +143,18 @@ async function parseInventoryFromExcel(filePath = DEFAULT_INVENTORY_XLSX) {
       continue;
     }
     if (!code) continue;
-    // Some templates may have non-item rows with no description and no qty values
-    if (!desc && (!minLevelRaw || !minIsNumber) && (!actualRaw || !actualIsNumber)) continue;
+    
+    // Skip invalid rows: item_code is "0" or description is "0" (parsing errors)
+    if (code === '0' || desc === '0') continue;
+    
+    // Skip rows where item_code and description are both empty or invalid
+    if (!code.trim() || code.trim() === '0') continue;
+    if (!desc.trim() && (!minLevelRaw || !minIsNumber) && (!actualRaw || !actualIsNumber)) continue;
+    
+    // Skip rows where all fields are zeros or empty (invalid data)
+    const allZeros = code === '0' && desc === '0' && partType === '0' && 
+                      (minLevelRaw === '0' || !minLevelRaw) && (actualRaw === '0' || !actualRaw);
+    if (allZeros) continue;
 
     // Extract the number from Section column if it's numeric (appears before item code)
     // Store both the subtitle and the number for searching
@@ -147,19 +180,128 @@ async function parseInventoryFromExcel(filePath = DEFAULT_INVENTORY_XLSX) {
 }
 
 /**
+ * Check if a row is a section header row (e.g., "Earthwire (Earthwire)")
+ * Section headers have the section name repeated across multiple columns
+ */
+function isSectionHeaderRow(row, colSection, colCode, colDesc, colPartType, colMin, colActual) {
+  const a = cellText(row.getCell(colSection).value).trim();
+  const code = cellText(row.getCell(colCode).value).trim();
+  const desc = cellText(row.getCell(colDesc).value).trim();
+  const partType = cellText(row.getCell(colPartType).value).trim();
+  const minLevelRaw = cellText(row.getCell(colMin).value).trim();
+  const actualRaw = cellText(row.getCell(colActual).value).trim();
+
+  if (!a) return false;
+
+  const aLower = a.toLowerCase();
+  const isTotalsRow = aLower === 'totals';
+  if (isTotalsRow) return true;
+
+  // Section header rows have:
+  // 1. Section name contains parentheses (e.g., "Earthwire (Earthwire)")
+  // 2. Same value repeated across multiple columns (or similar values)
+  // 3. MinLevel and Actual Qty are NOT numeric (they're text, empty, or the same as section name)
+  const minIsNumber = Number.isFinite(parseInt(minLevelRaw, 10));
+  const actualIsNumber = Number.isFinite(parseInt(actualRaw, 10));
+  const aLooksLikeNumber = /^\d+(\.\d+)?$/.test(a);
+  
+  // Check if section name contains parentheses (most common pattern)
+  const hasParentheses = a.includes('(') && a.includes(')');
+  
+  // Check if same value is repeated (allowing for slight variations like extra spaces)
+  const normalizedA = a.replace(/\s+/g, ' ').toLowerCase();
+  const normalizedCode = code.replace(/\s+/g, ' ').toLowerCase();
+  const normalizedDesc = desc.replace(/\s+/g, ' ').toLowerCase();
+  const normalizedPartType = partType.replace(/\s+/g, ' ').toLowerCase();
+  
+  const repeatedCore = normalizedA && (
+    normalizedCode === normalizedA || 
+    normalizedDesc === normalizedA || 
+    normalizedPartType === normalizedA || 
+    normalizedCode === normalizedDesc ||
+    (normalizedCode && normalizedCode.includes(normalizedA)) ||
+    (normalizedDesc && normalizedDesc.includes(normalizedA))
+  );
+  
+  // MinLevel/Actual Qty are not numeric - they're either empty, text, or match the section name
+  const minMatchesSection = minLevelRaw && (minLevelRaw === a || minLevelRaw.replace(/\s+/g, ' ').toLowerCase() === normalizedA);
+  const actualMatchesSection = actualRaw && (actualRaw === a || actualRaw.replace(/\s+/g, ' ').toLowerCase() === normalizedA);
+  const sectionQtyNotNumeric = (!minLevelRaw || !minIsNumber || minMatchesSection) && 
+                                (!actualRaw || !actualIsNumber || actualMatchesSection);
+  
+  // Section header if: has parentheses AND (repeated value OR quantities match section name)
+  const isSectionHeader = hasParentheses && (repeatedCore || minMatchesSection || actualMatchesSection) && sectionQtyNotNumeric;
+
+  return isSectionHeader;
+}
+
+/**
+ * Check if a row is empty or a spacer row (should be skipped)
+ * These rows should not be modified to preserve template structure
+ */
+function isEmptyOrSpacerRow(row, colSection, colCode, colDesc, colMin, colActual) {
+  const a = cellText(row.getCell(colSection).value).trim();
+  const code = cellText(row.getCell(colCode).value).trim();
+  const desc = cellText(row.getCell(colDesc).value).trim();
+  const minLevelRaw = cellText(row.getCell(colMin).value).trim();
+  const actualRaw = cellText(row.getCell(colActual).value).trim();
+
+  // Completely empty row
+  if (!a && !code && !desc && !minLevelRaw && !actualRaw) return true;
+
+  // Row with only zeros in quantity columns and no item code/description
+  // This catches spacer rows above section headers that have zeros
+  const minIsZero = minLevelRaw === '0' || minLevelRaw === '' || minLevelRaw === null;
+  const actualIsZero = actualRaw === '0' || actualRaw === '' || actualRaw === null;
+  const minIsNumericZero = minLevelRaw === '0' && Number.isFinite(parseInt(minLevelRaw, 10));
+  const actualIsNumericZero = actualRaw === '0' && Number.isFinite(parseInt(actualRaw, 10));
+  
+  // If no meaningful content (no code, no description, no section name) and quantities are zero/empty
+  if (!code && !desc && (!a || a === '0') && (minIsZero || minIsNumericZero) && (actualIsZero || actualIsNumericZero)) {
+    return true;
+  }
+
+  // Row with section name but no item code and zeros in quantities (spacer row above section)
+  if (a && !code && !desc && (minIsZero || minIsNumericZero) && (actualIsZero || actualIsNumericZero)) {
+    // But don't treat section headers as spacer rows (they're handled separately)
+    if (!a.includes('(') || !a.includes(')')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Update Actual Qty cells in-place based on item_code -> actual_qty map.
  * Only modifies the "Actual Qty" column.
+ * Skips section header rows and empty/spacer rows.
  */
 async function updateActualQtyInExcel(updatesByItemCode, filePath = DEFAULT_INVENTORY_XLSX) {
   const { workbook, worksheet, fullPath } = await loadInventoryWorkbook(filePath);
   const { headerRow, colMap } = findHeaderRowAndColumns(worksheet);
+  const colSection = colMap['section'] || 1;
   const colCode = colMap['item code'] || 2;
+  const colDesc = colMap['item description'] || 3;
+  const colPartType = colMap['part type'] || 4;
+  const colMin = colMap['minlevel'] || 5;
   const colActual = colMap['actual qty'] || 6;
 
-  // Build row lookup
+  // Build row lookup - skip section headers and empty rows
   const rowByCode = new Map();
   for (let r = headerRow + 1; r <= worksheet.rowCount; r++) {
     const row = worksheet.getRow(r);
+    
+    // Skip section header rows (e.g., "Earthwire (Earthwire)")
+    if (isSectionHeaderRow(row, colSection, colCode, colDesc, colPartType, colMin, colActual)) {
+      continue;
+    }
+    
+    // Skip empty or spacer rows
+    if (isEmptyOrSpacerRow(row, colSection, colCode, colDesc, colMin, colActual)) {
+      continue;
+    }
+    
     const code = cellText(row.getCell(colCode).value).trim();
     if (code) rowByCode.set(code, r);
   }
@@ -190,12 +332,23 @@ async function updateInventoryItemInExcel(oldItemCode, updates, filePath = DEFAU
   const colMin = colMap['minlevel'] || 5;
   const colActual = colMap['actual qty'] || 6;
 
-  // Build row lookup by old item code
+  // Build row lookup by old item code - skip section headers and empty rows
   let rowNum = null;
   for (let r = headerRow + 1; r <= worksheet.rowCount; r++) {
     const row = worksheet.getRow(r);
+    
+    // Skip section header rows (e.g., "Earthwire (Earthwire)")
+    if (isSectionHeaderRow(row, colSection, colCode, colDesc, colPartType, colMin, colActual)) {
+      continue;
+    }
+    
+    // Skip empty or spacer rows
+    if (isEmptyOrSpacerRow(row, colSection, colCode, colDesc, colMin, colActual)) {
+      continue;
+    }
+    
     const code = cellText(row.getCell(colCode).value).trim();
-    if (code === oldItemCode) {
+    if (code && code === oldItemCode) {
       rowNum = r;
       break;
     }
@@ -275,8 +428,20 @@ async function exportInventoryToExcel(pool, filePath = DEFAULT_INVENTORY_XLSX) {
     // Update existing rows in the template that match database items
     for (let r = headerRow + 1; r <= worksheet.rowCount; r++) {
       const row = worksheet.getRow(r);
+      
+      // Skip section header rows (e.g., "Earthwire (Earthwire)") - NEVER modify these
+      if (isSectionHeaderRow(row, colSection, colCode, colDesc, colPartType, colMin, colActual)) {
+        continue;
+      }
+      
+      // Skip empty or spacer rows - preserve template structure
+      if (isEmptyOrSpacerRow(row, colSection, colCode, colDesc, colMin, colActual)) {
+        continue;
+      }
+      
       const code = cellText(row.getCell(colCode).value).trim();
       
+      // Only update rows that have an item code and match a database item
       if (code) {
         // If this item exists in database, update the row with current values
         const dbItem = dbItemsByCode.get(code);

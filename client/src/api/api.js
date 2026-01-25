@@ -400,6 +400,63 @@ export const reviewTrackerStatusRequest = async (requestId, action, rejectionRea
   }
 };
 
+// Cycle Tracking API functions
+export const getCycleInfo = async (taskType) => {
+  try {
+    const response = await axios.get(
+      `${getApiBaseUrl()}/plant/cycles/${taskType}`,
+      { withCredentials: true }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching cycle info:', error);
+    throw error;
+  }
+};
+
+export const resetCycle = async (taskType) => {
+  try {
+    const response = await axios.post(
+      `${getApiBaseUrl()}/plant/cycles/${taskType}/reset`,
+      {},
+      { withCredentials: true }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error resetting cycle:', error);
+    throw error;
+  }
+};
+
+export const getCycleHistory = async (taskType, year = null, month = null) => {
+  try {
+    let url = `${getApiBaseUrl()}/plant/cycles/${taskType}/history`;
+    const params = [];
+    if (year) params.push(`year=${year}`);
+    if (month) params.push(`month=${month}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    
+    const response = await axios.get(url, { withCredentials: true });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching cycle history:', error);
+    throw error;
+  }
+};
+
+export const getCycleStats = async (taskType, year = null) => {
+  try {
+    let url = `${getApiBaseUrl()}/plant/cycles/${taskType}/stats`;
+    if (year) url += `?year=${year}`;
+    
+    const response = await axios.get(url, { withCredentials: true });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching cycle stats:', error);
+    throw error;
+  }
+};
+
 export const downloadFaultLog = async (period = 'all', params = {}) => {
   const baseUrl = getApiBaseUrl();
   let url = `${baseUrl}/cm-letters/fault-log/download?period=${period}`;
@@ -747,8 +804,18 @@ export const generateLicenseKey = async (companyName) => {
   }
 };
 
-// Feedback submission
-export const submitFeedback = (data) => api.post('/feedback', data);
+export const submitFeedback = async (data) => {
+  const API_BASE_URL = getApiBaseUrl();
+  try {
+    const response = await axios.post(`${API_BASE_URL}/feedback`, data, {
+      withCredentials: true,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error submitting feedback:', error);
+    throw error;
+  }
+};
 
 export default api;
 

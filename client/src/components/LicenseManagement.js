@@ -60,7 +60,8 @@ function LicenseManagement() {
       setActivateForm({ license_key: '', company_name: '', contact_email: '', contact_phone: '' });
       await loadLicenseInfo();
     } catch (error) {
-      setError(error.response?.data?.error || 'Failed to activate license');
+      const { getErrorMessage } = require('../utils/errorHandler');
+      setError(getErrorMessage(error, 'Failed to activate license'));
     }
   };
 
@@ -75,7 +76,8 @@ function LicenseManagement() {
       setRenewForm({ license_key: '' });
       await loadLicenseInfo();
     } catch (error) {
-      setError(error.response?.data?.error || 'Failed to renew license');
+      const { getErrorMessage } = require('../utils/errorHandler');
+      setError(getErrorMessage(error, 'Failed to renew license'));
     }
   };
 
@@ -88,7 +90,8 @@ function LicenseManagement() {
       setGeneratedKey(result.license_key);
       setSuccess('License key generated successfully!');
     } catch (error) {
-      setError(error.response?.data?.error || 'Failed to generate license key');
+      const { getErrorMessage } = require('../utils/errorHandler');
+      setError(getErrorMessage(error, 'Failed to generate license key'));
     }
   };
 

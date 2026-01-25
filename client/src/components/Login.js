@@ -37,7 +37,7 @@ function Login() {
     const normalizedUsername = (username || '').trim();
 
     if (!normalizedUsername || !password) {
-      setError('Please enter both username and password');
+      setError('Username and password required');
       setLoading(false);
       return;
     }
@@ -57,24 +57,17 @@ function Login() {
         navigate('/');
       } else {
         // Handle special error messages (e.g., ACCESS RESTRICTED)
-        const errorMsg = getErrorMessage(result.error || result, 'Login failed. Please check your credentials.');
+        const errorMsg = getErrorMessage(result.error || result, 'Incorrect password');
         if (errorContains(result.error || result, 'ACCESS RESTRICTED') && result.admin_email) {
-          setError(`ACCESS RESTRICTED\n\nYour account access has been restricted. Please contact the administrator at ${result.admin_email} for assistance.`);
+          setError(`Access restricted\nContact administrator: ${result.admin_email}`);
         } else {
           setError(errorMsg);
         }
       }
     } catch (err) {
       console.error('Login error caught:', err);
-      const errorMsg = getErrorMessage(err, 'Network error. Please check your connection and server status.');
-      
-      if (err.code === 'ECONNABORTED') {
-        setError('Connection timeout. Please check if the server is running and accessible.');
-      } else if (errorContains(err, 'timeout')) {
-        setError('Request timed out. The server may not be responding. Please check: 1) Server is running, 2) Correct API URL, 3) Network connection.');
-      } else {
-        setError(errorMsg);
-      }
+      const errorMsg = getErrorMessage(err, 'Connection failed');
+      setError(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -82,7 +75,7 @@ function Login() {
 
   const handleForgotPassword = () => {
     // For now, show a message. This can be expanded to a forgot password flow later
-    alert('Please contact your administrator to reset your password.');
+    setError('Contact administrator to reset password');
   };
 
   return (

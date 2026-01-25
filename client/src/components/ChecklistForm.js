@@ -294,7 +294,7 @@ function ChecklistForm() {
       return { ...data, sectionId, itemId };
     } catch (error) {
       console.error('Error uploading image:', error);
-      alert('Failed to upload image. Please try again.');
+      // Return null - error can be handled by caller
       return null;
     }
   };
@@ -306,7 +306,7 @@ function ChecklistForm() {
 
     // Check if user is assigned to this task
     if (!task || !task.assigned_users || !task.assigned_users.some(u => u.id === user?.id)) {
-      alert('You can only submit checklists for tasks assigned to you.');
+      setErrors({ general: 'Not assigned' });
       setSubmitting(false);
       return;
     }

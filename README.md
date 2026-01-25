@@ -114,6 +114,12 @@ The system displays a status indicator at the top of the screen showing:
 - **Admin Approval Workflow**: Tracker status changes require admin/superadmin approval
 - **Progress Tracking**: Real-time progress bars showing completion percentage for each work type
 - **Visual Status Indicators**: Color-coded tracker blocks (White=Not Done, Green=Done, Orange=Halfway)
+- **Cycle Tracking System**: Track maintenance cycles for Grass Cutting and Panel Washing
+  - Cycles increment automatically when tasks reach 100% completion
+  - Historical data stored with month-level detail for year-end analysis
+  - Cycle reset functionality for authorized users (admin/superadmin)
+  - Cycle information displayed on Plant page and included in PDF reports
+  - Prevents selection of completed (green) trackers for better workflow management
 
 ### Inventory Management
 - **Spare Parts Tracking**: Complete inventory management with minimum level alerts
@@ -288,9 +294,59 @@ ChecksheetsApp/
 │       ├── components/    # React components
 │       ├── api/           # API client
 │       └── App.js         # Main app component
+├── Sphair/                # Marketing website
+│   ├── index.html         # Main landing page
+│   ├── pricing.html       # Pricing page
+│   ├── assets/            # CSS, JS, images, vendor files
+│   ├── server.js          # Preview server
+│   └── README.md          # Marketing site documentation
 ├── Checksheets/           # Original checklist documents
 └── package.json           # Root package.json
 ```
+
+## Marketing Website
+
+SPHAiRPlatform includes a professional marketing website located in the `Sphair/` folder. This static website serves as the public-facing marketing site for the platform.
+
+### Website Structure
+
+- **Domain Structure**:
+  - `sphairplatform.com` → Marketing website (Sphair folder)
+  - `sphairplatform.com/app` → Actual software application
+
+### Pages
+
+- **index.html** - Main landing page featuring:
+  - Hero section with animated color transitions (red to blue)
+  - About section with key statistics
+  - Services overview (PM, CM, Plant Map, Inventory, Scheduling, Reporting)
+  - Call-to-action sections
+  - Contact information
+
+- **pricing.html** - Pricing and subscription plans:
+  - Three pricing tiers (Starter, Professional, Enterprise)
+  - Monthly/Yearly billing toggle
+  - Feature comparison
+  - FAQ section
+
+### Design Features
+
+- **Color Scheme**: Red (#DC2626) and Blue (#2563EB) branding
+- **Animations**: Smooth color fade animations in hero section
+- **Responsive**: Fully responsive design for all devices
+- **SEO Optimized**: Proper meta tags and semantic HTML
+- **Professional**: Clean, modern design focused on solar plant maintenance
+
+### Preview Locally
+
+```bash
+cd Sphair
+node server.js
+```
+
+Then open http://localhost:8081 in your browser.
+
+For more details, see [Sphair/README.md](./Sphair/README.md).
 
 ## Database Schema
 
@@ -307,6 +363,8 @@ ChecksheetsApp/
 - **checklist_responses**: Submitted checklist data
 - **cm_letters**: Corrective maintenance letters
 - **tracker_status_requests**: Tracker status change requests with approval workflow
+- **tracker_cycles**: Current cycle tracking for Grass Cutting and Panel Washing tasks
+- **tracker_cycle_history**: Historical cycle data with month-level detail for year-end analysis
 - **notifications**: In-app notifications with idempotency keys
 - **inventory_items**: Spare parts inventory
 - **plant_map_structure**: Plant map layout and tracker configurations
@@ -459,6 +517,10 @@ This two-tier approach balances security with usability, ensuring field workers 
 - `POST /api/plant/tracker-status-request` - Submit tracker status request (requires admin approval)
 - `GET /api/plant/tracker-status-requests` - Get tracker status requests (admin only)
 - `PATCH /api/plant/tracker-status-request/:id` - Approve/reject tracker status request (admin only)
+- `GET /api/plant/cycles/:task_type` - Get current cycle information for Grass Cutting or Panel Washing
+- `POST /api/plant/cycles/:task_type/reset` - Reset cycle (admin/superadmin only)
+- `GET /api/plant/cycles/:task_type/history` - Get cycle history with month-level detail
+- `GET /api/plant/cycles/:task_type/stats` - Get cycle statistics
 
 ### Inventory
 - `GET /api/inventory/items` - Get inventory items

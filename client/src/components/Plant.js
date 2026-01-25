@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { getPlantMapStructure, savePlantMapStructure, submitTrackerStatusRequest } from '../api/api';
+import { getPlantMapStructure, savePlantMapStructure, submitTrackerStatusRequest, getCycleInfo, resetCycle } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { generatePlantMapReport } from '../utils/plantMapReport';
 import './Plant.css';
@@ -30,15 +30,19 @@ const TrackerBlock = React.memo(({ tracker, bounds, viewMode, isSelected, onSele
                       (bgColor === '#FFD700' || bgColor === '#FF9800') ? '#FF9800' : // Brighter orange for halfway
                       bgColor;
   
+  // Check if tracker is already done (green) - should not be selectable
+  const isDone = !isSiteOffice && (bgColor === '#90EE90' || bgColor === '#4CAF50');
+  const isSelectable = !isSiteOffice && !isDone && selectionMode;
+
   const handleClick = (e) => {
-    if (isSiteOffice || !selectionMode) return;
+    if (isSiteOffice || !selectionMode || isDone) return;
     e.preventDefault();
     e.stopPropagation();
     onSelect(tracker);
   };
 
   const handleTouch = (e) => {
-    if (isSiteOffice || !selectionMode) return;
+    if (isSiteOffice || !selectionMode || isDone) return;
     e.preventDefault();
     e.stopPropagation();
     onSelect(tracker);
@@ -61,7 +65,8 @@ const TrackerBlock = React.memo(({ tracker, bounds, viewMode, isSelected, onSele
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        cursor: isSiteOffice ? 'default' : (selectionMode ? 'pointer' : 'default'),
+        cursor: isSiteOffice ? 'default' : (isSelectable ? 'pointer' : (isDone ? 'not-allowed' : 'default')),
+        opacity: isDone && selectionMode ? 0.6 : 1,
         userSelect: 'none',
         WebkitUserSelect: 'none',
         WebkitTouchCallout: 'none',
@@ -75,7 +80,7 @@ const TrackerBlock = React.memo(({ tracker, bounds, viewMode, isSelected, onSele
         msTouchAction: selectionMode ? 'manipulation' : 'auto'
       }}
       className={!isSiteOffice ? 'tracker-block' : ''}
-      title={isSiteOffice ? 'Site Office' : `${tracker.label} - ${tracker.cabinet}${selectionMode ? '\nTap to select' : ''}`}
+      title={isSiteOffice ? 'Site Office' : `${tracker.label} - ${tracker.cabinet}${isDone && selectionMode ? '\nAlready completed - cannot select' : selectionMode ? '\nTap to select' : ''}`}
     >
       {isSelected && (
         <div style={{
@@ -131,6 +136,9 @@ function Plant() {
   const hasLoadedRef = useRef(false);
   const mapContainerRef = useRef(null);
   const [downloading, setDownloading] = useState(false);
+  const [currentCycle, setCurrentCycle] = useState(null);
+  const [cycleLoading, setCycleLoading] = useState(false);
+  const [resettingCycle, setResettingCycle] = useState(false);
 
   // Load map structure with fallback chain: Server -> localStorage -> empty
   useEffect(() => {
@@ -274,6 +282,16 @@ function Plant() {
   const handleTrackerSelect = useCallback((tracker) => {
     if (tracker.id === 'SITE_OFFICE') return;
     if (!selectionMode) return; // Only allow selection when in selection mode
+    
+    // Check if tracker is already done (green) - should not be selectable
+    const color = viewMode === 'grass_cutting' ? tracker.grassCuttingColor : tracker.panelWashColor;
+    const isDone = color === '#90EE90' || color === '#4CAF50';
+    
+    if (isDone) {
+      // Don't allow selection of already completed trackers
+      return;
+    }
+    
     setSelectedTrackers(prev => {
       const newSet = new Set(prev);
       if (newSet.has(tracker.id)) {
@@ -283,7 +301,7 @@ function Plant() {
       }
       return newSet;
     });
-  }, [selectionMode]);
+  }, [selectionMode, viewMode]);
 
   // Clear selection
   const clearSelection = useCallback(() => {
@@ -382,6 +400,66 @@ function Plant() {
     return Math.min(100, Math.max(0, progressValue));
   }, [trackers, viewMode]);
 
+  // Load cycle information
+  useEffect(() => {
+    const loadCycleInfo = async () => {
+      if (!viewMode) return;
+      setCycleLoading(true);
+      try {
+        const cycleData = await getCycleInfo(viewMode);
+        setCurrentCycle(cycleData);
+      } catch (error) {
+        console.error('[PLANT] Error loading cycle info:', error);
+        // Don't show error to user, just log it
+      } finally {
+        setCycleLoading(false);
+      }
+    };
+
+    loadCycleInfo();
+  }, [viewMode, trackers]); // Reload when viewMode or trackers change
+
+  // Handle cycle reset
+  const handleResetCycle = useCallback(async () => {
+    if (!isAdmin()) {
+      alert('Only administrators can reset cycles');
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to reset the ${viewMode === 'grass_cutting' ? 'Grass Cutting' : 'Panel Wash'} cycle?\n\nThis will:\n- Complete the current cycle\n- Start a new cycle\n- Reset all tracker colors to white\n\nThis action cannot be undone.`)) {
+      return;
+    }
+
+    setResettingCycle(true);
+    try {
+      const result = await resetCycle(viewMode);
+      alert(`Cycle reset successfully! New cycle: ${result.new_cycle_number}`);
+      
+      // Reload cycle info and trackers
+      const cycleData = await getCycleInfo(viewMode);
+      setCurrentCycle(cycleData);
+      
+      // Reload trackers to reflect reset colors
+      const structureResult = await getPlantMapStructure();
+      if (structureResult && structureResult.structure) {
+        const filtered = structureResult.structure.filter(t => 
+          (t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id)) || t.id === 'SITE_OFFICE'
+        );
+        const fixed = filtered.map(t => {
+          if (t.id === 'SITE_OFFICE') return t;
+          const correctCT = getCorrectCabinet(t.id);
+          return correctCT ? { ...t, cabinet: correctCT } : t;
+        });
+        setTrackers(fixed);
+      }
+    } catch (error) {
+      console.error('[PLANT] Error resetting cycle:', error);
+      alert('Failed to reset cycle: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setResettingCycle(false);
+    }
+  }, [viewMode, isAdmin]);
+
   // Calculate detailed statistics for report
   const statistics = useMemo(() => {
     const allTrackers = trackers.filter(t => t.id !== 'SITE_OFFICE');
@@ -428,11 +506,35 @@ function Plant() {
       return; // Prevent multiple simultaneous downloads
     }
 
+    // Ensure cycle info is loaded before generating PDF
+    if (cycleLoading) {
+      alert('Please wait for cycle information to load before generating the report.');
+      return;
+    }
+
     setDownloading(true);
     try {
+      // If cycle info hasn't loaded yet, fetch it now
+      let cycleData = currentCycle;
+      if (!cycleData) {
+        try {
+          cycleData = await getCycleInfo(viewMode);
+          setCurrentCycle(cycleData);
+        } catch (error) {
+          console.warn('[PLANT] Could not load cycle info for PDF, continuing without it:', error);
+          // Continue without cycle info rather than failing the entire PDF generation
+        }
+      }
+
+      // Include cycle number in statistics for PDF
+      const statsWithCycle = {
+        ...statistics,
+        cycleNumber: cycleData?.cycle_number || null
+      };
+      
       await generatePlantMapReport(
         mapContainerRef.current,
-        statistics,
+        statsWithCycle,
         viewMode
       );
     } catch (error) {
@@ -441,7 +543,7 @@ function Plant() {
     } finally {
       setDownloading(false);
     }
-  }, [mapContainerRef, statistics, viewMode, downloading]);
+  }, [mapContainerRef, statistics, viewMode, downloading, currentCycle, cycleLoading]);
 
   if (loading) {
     return (
@@ -695,8 +797,56 @@ function Plant() {
 
       {/* Footer */}
       <div style={{ marginTop: '10px', fontSize: '12px', color: '#666', textAlign: 'center' }}>
-        Trackers: {trackers.filter(t => t.id !== 'SITE_OFFICE').length}
-        {selectionMode && ` | ${selectedTrackers.size} selected`}
+        <div style={{ marginBottom: '8px' }}>
+          Trackers: {trackers.filter(t => t.id !== 'SITE_OFFICE').length}
+          {selectionMode && ` | ${selectedTrackers.size} selected`}
+          {currentCycle && currentCycle.cycle_number && (
+            <span style={{ color: '#4CAF50', fontWeight: 'bold', marginLeft: '8px' }}>
+              | Cycle: {currentCycle.cycle_number}
+            </span>
+          )}
+          {currentCycle && (!currentCycle.cycle_number || currentCycle.cycle_number === null) && (
+            <span style={{ color: '#999', fontWeight: 'normal', marginLeft: '8px' }}>
+              | Cycle: Not Started
+            </span>
+          )}
+        </div>
+        
+        {/* Cycle completion indicator and reset button */}
+        {currentCycle && currentCycle.is_complete && (
+          <div style={{ 
+            marginTop: '8px', 
+            padding: '8px 12px', 
+            backgroundColor: '#4CAF50', 
+            color: 'white', 
+            borderRadius: '4px',
+            display: 'inline-block',
+            fontSize: '13px',
+            fontWeight: '500'
+          }}>
+            ✓ Cycle {currentCycle.cycle_number} Completed! 
+            {isAdmin() && (
+              <button
+                onClick={handleResetCycle}
+                disabled={resettingCycle}
+                style={{
+                  marginLeft: '12px',
+                  padding: '4px 12px',
+                  backgroundColor: 'white',
+                  color: '#4CAF50',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: resettingCycle ? 'not-allowed' : 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '12px',
+                  opacity: resettingCycle ? 0.6 : 1
+                }}
+              >
+                {resettingCycle ? 'Resetting...' : 'Reset Cycle'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Status Request Modal */}

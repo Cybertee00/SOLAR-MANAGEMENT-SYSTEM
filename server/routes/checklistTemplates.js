@@ -387,7 +387,7 @@ module.exports = (pool) => {
    */
   router.patch('/:id/metadata', requireAuth, requirePermission('templates:update'), async (req, res) => {
     try {
-      const { last_revision_date } = req.body;
+      const { last_revision_date, checklist_made_by, last_revision_approved_by } = req.body;
       const templateId = req.params.id;
 
       const result = await pool.query(
@@ -410,8 +410,16 @@ module.exports = (pool) => {
         checklistStructure.metadata = {};
       }
 
-      // Manual template-level revision date (e.g. "Date of Last Revision" in the Excel header)
-      checklistStructure.metadata.last_revision_date = last_revision_date || '';
+      // Manual template-level metadata fields
+      if (last_revision_date !== undefined) {
+        checklistStructure.metadata.last_revision_date = last_revision_date || '';
+      }
+      if (checklist_made_by !== undefined) {
+        checklistStructure.metadata.checklist_made_by = checklist_made_by || '';
+      }
+      if (last_revision_approved_by !== undefined) {
+        checklistStructure.metadata.last_revision_approved_by = last_revision_approved_by || '';
+      }
 
       const update = await pool.query(
         `UPDATE checklist_templates

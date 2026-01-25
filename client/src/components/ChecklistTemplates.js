@@ -10,6 +10,7 @@ import {
 } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
+import { getErrorMessage } from '../utils/errorHandler';
 import './ChecklistTemplates.css';
 
 function ChecklistTemplates() {
@@ -17,9 +18,12 @@ function ChecklistTemplates() {
   const { hasPermission } = usePermissions();
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
   const [lastRevisionDate, setLastRevisionDate] = useState('');
+  const [checklistMadeBy, setChecklistMadeBy] = useState('');
+  const [lastRevisionApprovedBy, setLastRevisionApprovedBy] = useState('');
   const [savingRevision, setSavingRevision] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
@@ -77,21 +81,8 @@ function ChecklistTemplates() {
       setLoading(false);
     } catch (error) {
       console.error('Error loading checklist templates:', error);
-      console.error('Error details:', error.response?.data || error.message);
       setLoading(false);
-      
-      // More detailed error message
-      let errorMessage = 'Network Error';
-      if (error.code === 'ECONNABORTED') {
-        errorMessage = 'Request timeout - Backend server may not be running';
-      } else if (error.message === 'Network Error' || !error.response) {
-        errorMessage = `Cannot connect to backend API.\n\nPlease check:\n1. Backend server is running on port 3001\n2. API URL is correct\n3. For Wi-Fi: Use your PC's IP address\n4. For USB: Ensure ADB port forwarding is set up`;
-      } else {
-        errorMessage = error.response?.data?.error || error.message;
-      }
-      
-      // Show error to user
-      alert(`Failed to load templates: ${errorMessage}\n\nCheck browser console (F12) for details.`);
+      setError(getErrorMessage(error, 'Templates unavailable'));
     }
   };
 
@@ -100,8 +91,10 @@ function ChecklistTemplates() {
       const response = await getChecklistTemplate(templateId);
       const template = response.data;
       setSelectedTemplate(template);
-      const existing = template?.checklist_structure?.metadata?.last_revision_date || '';
-      setLastRevisionDate(existing);
+      const metadata = template?.checklist_structure?.metadata || {};
+      setLastRevisionDate(metadata.last_revision_date || '');
+      setChecklistMadeBy(metadata.checklist_made_by || 'and');
+      setLastRevisionApprovedBy(metadata.last_revision_approved_by || 'Floridas Moloto');
       
       // Load checklist structure for editing
       const structure = template.checklist_structure || { metadata: {}, sections: [] };
@@ -113,7 +106,7 @@ function ChecklistTemplates() {
       setShowDetails(true);
     } catch (error) {
       console.error('Error loading template details:', error);
-      alert('Failed to load template details');
+      setError(getErrorMessage(error, 'Template not found'));
     }
   };
 
@@ -122,13 +115,15 @@ function ChecklistTemplates() {
     try {
       setSavingRevision(true);
       const response = await updateChecklistTemplateMetadata(selectedTemplate.id, {
-        last_revision_date: lastRevisionDate
+        last_revision_date: lastRevisionDate,
+        checklist_made_by: checklistMadeBy,
+        last_revision_approved_by: lastRevisionApprovedBy
       });
       setSelectedTemplate(response.data);
-      alert('Last revision date saved');
+      setError('');
     } catch (error) {
-      console.error('Error saving last revision date:', error);
-      alert('Failed to save last revision date: ' + (error.response?.data?.error || error.message));
+      console.error('Error saving template metadata:', error);
+      setError(getErrorMessage(error, 'Save failed'));
     } finally {
       setSavingRevision(false);
     }
@@ -300,11 +295,10 @@ function ChecklistTemplates() {
       // Reload template to get updated data
       const response = await getChecklistTemplate(selectedTemplate.id);
       setSelectedTemplate(response.data);
-      
-      alert('Checklist structure saved successfully!');
+      setError('');
     } catch (error) {
       console.error('Error saving checklist structure:', error);
-      alert('Failed to save checklist structure: ' + (error.response?.data?.error || error.message));
+      setError(getErrorMessage(error, 'Save failed'));
     } finally {
       setSavingStructure(false);
     }
@@ -340,21 +334,54 @@ function ChecklistTemplates() {
           {isAdmin() && (
             <div style={{ marginTop: '20px', padding: '15px', background: '#f9f9f9', borderRadius: '4px' }}>
               <h4 style={{ marginTop: 0 }}>Template Metadata</h4>
-              <div className="form-group" style={{ maxWidth: '320px' }}>
-                <label>Last Revision Date (manual)</label>
-                <input
-                  type="date"
-                  value={lastRevisionDate}
-                  onChange={(e) => setLastRevisionDate(e.target.value)}
-                  disabled={savingRevision}
-                />
-                <small style={{ display: 'block', marginTop: '6px', color: '#666' }}>
-                  This fills the report placeholder <code>{'{last_revision_date}'}</code>.
-                </small>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div className="form-group" style={{ flex: '1', minWidth: '200px' }}>
+                  <label>Last Revision Date</label>
+                  <input
+                    type="date"
+                    value={lastRevisionDate}
+                    onChange={(e) => setLastRevisionDate(e.target.value)}
+                    disabled={savingRevision}
+                    style={{ width: '100%' }}
+                  />
+                  <small style={{ display: 'block', marginTop: '6px', color: '#666' }}>
+                    Fills <code>{'{last_revision_date}'}</code>
+                  </small>
+                </div>
+                <div className="form-group" style={{ flex: '1', minWidth: '200px' }}>
+                  <label>Checklist Made By</label>
+                  <input
+                    type="text"
+                    value={checklistMadeBy}
+                    onChange={(e) => setChecklistMadeBy(e.target.value)}
+                    disabled={savingRevision}
+                    placeholder="and"
+                    style={{ width: '100%' }}
+                  />
+                  <small style={{ display: 'block', marginTop: '6px', color: '#666' }}>
+                    Fills <code>{'{checklist_made_by}'}</code>
+                  </small>
+                </div>
+                <div className="form-group" style={{ flex: '1', minWidth: '200px' }}>
+                  <label>Last Revision Approved By</label>
+                  <input
+                    type="text"
+                    value={lastRevisionApprovedBy}
+                    onChange={(e) => setLastRevisionApprovedBy(e.target.value)}
+                    disabled={savingRevision}
+                    placeholder="Floridas Moloto"
+                    style={{ width: '100%' }}
+                  />
+                  <small style={{ display: 'block', marginTop: '6px', color: '#666' }}>
+                    Fills <code>{'{last_revision_approved_by}'}</code>
+                  </small>
+                </div>
+                <div style={{ flex: '0 0 auto' }}>
+                  <button className="btn btn-primary" onClick={handleSaveLastRevisionDate} disabled={savingRevision}>
+                    {savingRevision ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
               </div>
-              <button className="btn btn-primary" onClick={handleSaveLastRevisionDate} disabled={savingRevision}>
-                {savingRevision ? 'Saving...' : 'Save'}
-              </button>
             </div>
           )}
 
@@ -378,7 +405,7 @@ function ChecklistTemplates() {
                     className="btn btn-primary" 
                     onClick={handleSaveStructure}
                     disabled={savingStructure}
-                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    style={{ padding: '8px 16px', fontSize: '14px' }}
                   >
                     {savingStructure ? 'Saving...' : 'Save'}
                   </button>
@@ -683,9 +710,10 @@ function ChecklistTemplates() {
 
   const handleUpload = async () => {
     if (!uploadForm.file || !uploadForm.asset_type || !uploadForm.asset_prefix) {
-      alert('Please select a file and provide asset type and prefix');
+      setError('File, asset type, and prefix required');
       return;
     }
+    setError('');
 
     try {
       setUploading(true);
@@ -700,7 +728,6 @@ function ChecklistTemplates() {
       if (uploadForm.update_existing) formData.append('update_existing', 'true');
 
       const response = await uploadTemplateFile(formData);
-      alert('Template uploaded and parsed successfully!');
       setShowUploadModal(false);
       setUploadForm({
         file: null,
@@ -712,10 +739,11 @@ function ChecklistTemplates() {
         task_type: 'PM',
         update_existing: false
       });
+      setError('');
       loadTemplates();
     } catch (error) {
       console.error('Error uploading template:', error);
-      alert('Failed to upload template: ' + (error.response?.data?.error || error.message));
+      setError(getErrorMessage(error, 'Upload failed'));
     } finally {
       setUploading(false);
     }
@@ -723,15 +751,16 @@ function ChecklistTemplates() {
 
   const handleCreate = async () => {
     if (!createForm.template_code || !createForm.template_name || !createForm.asset_type) {
-      alert('Please fill in all required fields');
+      setError('Required fields missing');
       return;
     }
+    setError('');
 
     try {
       setUploading(true);
       await createChecklistTemplate(createForm);
-      alert('Template created successfully!');
       setShowCreateModal(false);
+      setError('');
       setCreateForm({
         template_code: '',
         template_name: '',
@@ -743,7 +772,7 @@ function ChecklistTemplates() {
       loadTemplates();
     } catch (error) {
       console.error('Error creating template:', error);
-      alert('Failed to create template: ' + (error.response?.data?.error || error.message));
+      setError(getErrorMessage(error, 'Create failed'));
     } finally {
       setUploading(false);
     }
@@ -768,12 +797,12 @@ function ChecklistTemplates() {
     try {
       setUploading(true);
       await updateChecklistTemplate(selectedTemplate.id, createForm);
-      alert('Template updated successfully!');
       setShowEditModal(false);
+      setError('');
       loadTemplates();
     } catch (error) {
       console.error('Error updating template:', error);
-      alert('Failed to update template: ' + (error.response?.data?.error || error.message));
+      setError(getErrorMessage(error, 'Update failed'));
     } finally {
       setUploading(false);
     }
@@ -790,13 +819,13 @@ function ChecklistTemplates() {
     try {
       setUploading(true);
       await deleteChecklistTemplate(templateToDelete.id);
-      alert('Template deleted successfully!');
       setShowDeleteConfirm(false);
       setTemplateToDelete(null);
+      setError('');
       loadTemplates();
     } catch (error) {
       console.error('Error deleting template:', error);
-      alert('Failed to delete template: ' + (error.response?.data?.error || error.message));
+      setError(getErrorMessage(error, 'Delete failed'));
     } finally {
       setUploading(false);
     }
@@ -819,6 +848,10 @@ function ChecklistTemplates() {
           </div>
         )}
       </div>
+
+      {error && (
+        <div className="error">{error}</div>
+      )}
 
       {templates.length === 0 && !loading ? (
         <div className="card">
@@ -880,22 +913,13 @@ function ChecklistTemplates() {
                                 onClick={() => handleDeleteClick(template)}
                                 title="Delete template"
                                 style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  padding: '4px',
+                                  cursor: 'pointer',
                                   display: 'flex',
                                   alignItems: 'center',
-                                  justifyContent: 'center',
-                                  padding: '6px',
-                                  background: 'transparent',
-                                  border: 'none',
-                                  cursor: 'pointer',
-                                  transition: 'transform 0.2s ease, opacity 0.2s ease'
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.transform = 'scale(1.1)';
-                                  e.currentTarget.style.opacity = '0.8';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.transform = 'scale(1)';
-                                  e.currentTarget.style.opacity = '1';
+                                  justifyContent: 'center'
                                 }}
                               >
                                 <svg
@@ -906,8 +930,11 @@ function ChecklistTemplates() {
                                   xmlns="http://www.w3.org/2000/svg"
                                 >
                                   <path
-                                    d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
-                                    fill="#dc3545"
+                                    d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6"
+                                    stroke="#dc3545"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
                                   />
                                 </svg>
                               </button>

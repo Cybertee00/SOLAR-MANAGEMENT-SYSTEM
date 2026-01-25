@@ -126,8 +126,13 @@
 .error-text {
   color: #d32f2f;
   font-size: 0.85em;
-  margin-top: 5px;
+  margin-top: 4px;
   display: block;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
 }
 
 .users-table th {

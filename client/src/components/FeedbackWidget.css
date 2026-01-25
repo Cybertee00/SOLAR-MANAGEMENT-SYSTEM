@@ -1,116 +1,94 @@
-/**
- * Feedback Widget Styles
- * Floating action button positioned at bottom-right
- */
-
 .feedback-widget-button {
   position: fixed;
   bottom: 24px;
   right: 24px;
-  width: 56px;
-  height: 56px;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #1976d2 0%, #42a5f5 50%, #1565c0 100%);
   border: none;
-  box-shadow: 
-    0 4px 12px rgba(25, 118, 210, 0.4),
-    0 2px 4px rgba(25, 118, 210, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  padding: 0;
-  overflow: hidden;
+  
+  /* 3-color gradient: light blue → medium blue → dark blue */
+  background: linear-gradient(135deg, 
+    #64B5F6 0%,      /* Light blue */
+    #42A5F5 50%,    /* Medium blue */
+    #1976D2 100%    /* Dark blue */
+  );
+  
+  /* Multiple shadow layers for depth */
+  box-shadow: 
+    /* Main shadow for elevation */
+    0 8px 16px rgba(25, 118, 210, 0.4),
+    /* Secondary shadow for depth */
+    0 4px 8px rgba(25, 118, 210, 0.3),
+    /* Inset highlight for glossy look */
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    /* Outer glow */
+    0 0 0 0 rgba(25, 118, 210, 0.2);
+  
+  /* Icon drop shadow for separation */
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
 }
 
 .feedback-widget-button:hover {
-  transform: scale(1.1) translateY(-2px);
+  /* Slight lift */
+  transform: translateY(-2px);
+  
+  /* Icon rotation */
+  transform: translateY(-2px) rotate(5deg);
+  
+  /* Enhanced shadows on hover */
   box-shadow: 
-    0 8px 20px rgba(25, 118, 210, 0.5),
-    0 4px 8px rgba(25, 118, 210, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  background: linear-gradient(135deg, #1565c0 0%, #42a5f5 50%, #0d47a1 100%);
+    0 12px 24px rgba(25, 118, 210, 0.5),
+    0 6px 12px rgba(25, 118, 210, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 0 0 4px rgba(25, 118, 210, 0.1);
 }
 
 .feedback-widget-button:active {
-  transform: scale(0.95) translateY(0);
+  /* Pressed effect with inset shadow */
+  transform: translateY(0) rotate(0deg);
   box-shadow: 
-    0 2px 8px rgba(25, 118, 210, 0.3),
+    0 4px 8px rgba(25, 118, 210, 0.3),
+    0 2px 4px rgba(25, 118, 210, 0.2),
     inset 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-.feedback-widget-button:focus {
-  outline: none;
-  box-shadow: 
-    0 4px 12px rgba(25, 118, 210, 0.4),
-    0 2px 4px rgba(25, 118, 210, 0.3),
-    0 0 0 3px rgba(25, 118, 210, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+.feedback-icon {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
 }
 
-.feedback-widget-icon {
-  width: 28px;
-  height: 28px;
-  color: white;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
-  transition: transform 0.2s ease;
+.feedback-widget-button:hover .feedback-icon {
+  transform: scale(1.05);
 }
 
-.feedback-widget-button:hover .feedback-widget-icon {
-  transform: scale(1.1) rotate(-5deg);
-}
-
-/* Pulse animation on first load */
-@keyframes pulse {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.05);
-  }
-}
-
-.feedback-widget-button {
-  animation: pulse 2s ease-in-out 3;
-}
-
-/* Responsive design for mobile */
+/* Responsive design */
 @media (max-width: 768px) {
   .feedback-widget-button {
-    width: 48px;
-    height: 48px;
+    width: 56px;
+    height: 56px;
     bottom: 16px;
     right: 16px;
   }
-
-  .feedback-widget-icon {
+  
+  .feedback-icon {
     width: 24px;
     height: 24px;
   }
 }
 
-/* High contrast mode support */
-@media (prefers-contrast: high) {
-  .feedback-widget-button {
-    border: 2px solid #000;
-  }
+/* Accessibility: Focus state */
+.feedback-widget-button:focus {
+  outline: 2px solid rgba(25, 118, 210, 0.5);
+  outline-offset: 2px;
 }
 
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-  .feedback-widget-button {
-    animation: none;
-    transition: none;
-  }
-
-  .feedback-widget-button:hover {
-    transform: none;
-  }
-
-  .feedback-widget-icon {
-    transition: none;
-  }
+.feedback-widget-button:focus:not(:focus-visible) {
+  outline: none;
 }

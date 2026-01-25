@@ -234,6 +234,16 @@
   animation: slideDown 0.3s ease-out;
 }
 
+.alert.alert-error,
+.alert.alert-restricted {
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  margin: 4px 0;
+}
+
 @keyframes slideDown {
   from {
     opacity: 0;
@@ -246,19 +256,19 @@
 }
 
 .alert-error {
-  background-color: rgba(244, 67, 53, 0.1);
   color: var(--md-error);
-  border: 1px solid rgba(244, 67, 53, 0.3);
-  border-left: 4px solid var(--md-error);
+  font-size: 14px;
+  margin: 8px 0;
+  background: transparent;
 }
 
 .alert-restricted {
-  background-color: rgba(251, 140, 0, 0.1);
   color: #e65100;
-  border: 1px solid rgba(251, 140, 0, 0.3);
-  border-left: 4px solid var(--md-warning);
+  font-size: 14px;
+  margin: 8px 0;
   font-weight: 500;
   white-space: pre-line;
+  background: transparent;
 }
 
 .login-footer {
