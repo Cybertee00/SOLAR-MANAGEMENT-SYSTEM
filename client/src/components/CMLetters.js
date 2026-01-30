@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getCMLetters, getCMLetter, updateCMLetterStatus, getApiBaseUrl, downloadFaultLog, updateCMLetterFaultLog } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { hasOrganizationContext } from '../utils/organizationContext';
 
 function CMLetters() {
   const [letters, setLetters] = useState([]);
@@ -15,7 +16,7 @@ function CMLetters() {
   const [downloading, setDownloading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const itemsPerPage = 4;
 
   // Fault log form state
@@ -38,8 +39,20 @@ function CMLetters() {
   });
 
   useEffect(() => {
-    loadCMLetters();
-  }, [filter]);
+    // Wait for AuthContext to finish loading before checking organization context
+    if (authLoading) {
+      return; // Don't check until auth is loaded
+    }
+    
+    // Only load CM letters if user has organization context
+    if (hasOrganizationContext(user)) {
+      loadCMLetters();
+    } else {
+      // System owner without company: show empty CM letters
+      setLetters([]);
+      setLoading(false);
+    }
+  }, [filter, user, authLoading]);
 
   // Reset to page 1 when filter changes
   useEffect(() => {
@@ -136,8 +149,14 @@ function CMLetters() {
       return imagePath;
     }
     
-    // Handle different path formats:
-    // - "/uploads/filename.jpg" -> extract "filename.jpg"
+    // If it's already a company-scoped path (starts with /uploads/companies/), use it directly
+    if (imagePath.startsWith('/uploads/companies/')) {
+      const apiBase = getApiBaseUrl().replace('/api', '');
+      return `${apiBase}${imagePath}`;
+    }
+    
+    // Legacy support: Handle old path formats for backward compatibility
+    // - "/uploads/filename.jpg" -> extract "filename.jpg" and use legacy route
     // - "uploads/filename.jpg" -> extract "filename.jpg"
     // - "filename.jpg" -> use as-is
     let filename = imagePath;
@@ -150,12 +169,12 @@ function CMLetters() {
     // Remove any leading/trailing whitespace
     filename = filename.trim();
     
-    // Construct URL - server serves static files from /uploads directory
+    // Construct URL - use legacy route for old paths (will be removed after migration)
     // The API base URL is like "http://hostname:3001/api", we need "http://hostname:3001"
     const apiBase = getApiBaseUrl().replace('/api', '');
     const imageUrl = `${apiBase}/uploads/${filename}`;
     
-    console.log('getImageUrl:', { imagePath, filename, imageUrl, apiBase });
+    console.log('getImageUrl (legacy path):', { imagePath, filename, imageUrl, apiBase });
     return imageUrl;
   };
 

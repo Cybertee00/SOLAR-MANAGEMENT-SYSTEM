@@ -166,7 +166,7 @@ function TaskDetail() {
   return (
     <div>
       <div style={{ marginBottom: '20px' }}>
-        <Link to="/tasks" className="btn btn-secondary">Back</Link>
+        <Link to="/tenant/tasks" className="btn btn-secondary">Back</Link>
       </div>
 
       <div className="card">

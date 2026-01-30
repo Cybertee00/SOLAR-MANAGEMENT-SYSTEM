@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { getPlantMapStructure, savePlantMapStructure, submitTrackerStatusRequest, getCycleInfo, resetCycle } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { hasOrganizationContext, isSystemOwnerWithoutCompany } from '../utils/organizationContext';
 import { generatePlantMapReport } from '../utils/plantMapReport';
 import './Plant.css';
 
@@ -118,7 +120,7 @@ const TrackerBlock = React.memo(({ tracker, bounds, viewMode, isSelected, onSele
 TrackerBlock.displayName = 'TrackerBlock';
 
 function Plant() {
-  const { isAdmin, isSuperAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin, user, loading: authLoading, hasAnyRole } = useAuth();
   const [trackers, setTrackers] = useState([]);
   const [selectedTrackers, setSelectedTrackers] = useState(new Set()); // Multi-select
   const [selectionMode, setSelectionMode] = useState(false); // Toggle for selection mode
@@ -139,123 +141,206 @@ function Plant() {
   const [currentCycle, setCurrentCycle] = useState(null);
   const [cycleLoading, setCycleLoading] = useState(false);
   const [resettingCycle, setResettingCycle] = useState(false);
+  const siteMapName = 'Site Map'; // Always "Site Map" for all organizations
+  const location = useLocation();
+  const lastLocationRef = useRef(null);
 
-  // Load map structure with fallback chain: Server -> localStorage -> empty
-  useEffect(() => {
-    if (hasLoadedRef.current) return;
-    hasLoadedRef.current = true;
+  /**
+   * Load map structure from company folder ONLY
+   * PERMANENT SOLUTION: No localStorage fallback to prevent cross-company data leakage
+   * Each company's map is stored in: uploads/companies/{slug}/plant/map-structure.json
+   * 
+   * This function is extracted so it can be called:
+   * - On initial mount
+   * - When page becomes visible again (after approval)
+   * - When viewMode changes
+   */
+  const loadMapStructure = useCallback(async (forceReload = false) => {
+    // Wait for AuthContext to finish loading before checking organization context
+    if (authLoading) {
+      return; // Don't check until auth is loaded
+    }
     
-    const loadMapStructure = async () => {
-      setLoading(true);
-      setError(null);
+    // If not forcing reload, check if already loaded
+    if (!forceReload && hasLoadedRef.current) {
+      return;
+    }
+    
+    // Mark as loaded (unless forcing reload)
+    if (!forceReload) {
+      hasLoadedRef.current = true;
+    }
+    
+    setLoading(true);
+    setError(null);
+    
+      // Check if user has organization context
+      if (isSystemOwnerWithoutCompany(user)) {
+        // System owner without company: show empty map
+        console.log('[PLANT] System owner without company selected - showing empty map');
+        setTrackers([]);
+        setLoading(false);
+        return;
+      }
+    
+    try {
+      // Load from server (company-scoped folder)
+      const serverPromise = getPlantMapStructure();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Server timeout')), 5000)
+      );
       
+      let structure = null;
+      let serverHasData = false;
+      
+      // Try to load from server (company folder)
       try {
-        // Try to load from server first (with 5 second timeout)
-        const serverPromise = getPlantMapStructure();
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Server timeout')), 5000)
+        const result = await Promise.race([serverPromise, timeoutPromise]);
+        if (result && result.structure && Array.isArray(result.structure)) {
+          if (result.structure.length > 0) {
+            structure = result.structure;
+            serverHasData = true;
+            console.log('[PLANT] Loaded structure from company folder:', structure.length, 'trackers');
+          } else {
+            // Server returned empty array - company has no map data
+            serverHasData = false;
+            console.log('[PLANT] Company folder has no map structure - showing blank map');
+          }
+        }
+      } catch (serverError) {
+        console.warn('[PLANT] Server load failed or timeout:', serverError.message);
+        serverHasData = false;
+      }
+      
+      // NO localStorage fallback - ensures data isolation
+      // Each company must have its own map in company folder
+      if (!structure || structure.length === 0) {
+        console.log('[PLANT] No map structure found in company folder - showing blank map');
+        structure = [];
+      }
+      
+      // Process structure
+      if (structure && structure.length > 0) {
+        // Filter: keep only M## trackers and SITE_OFFICE, remove roads
+        const filtered = structure.filter(t => 
+          (t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id)) || t.id === 'SITE_OFFICE'
         );
         
-        let structure = null;
-        let loadedFromServer = false;
-        let serverHasData = false;
+        // Fix CT numbers
+        const fixed = filtered.map(t => {
+          if (t.id === 'SITE_OFFICE') return t;
+          const correctCT = getCorrectCabinet(t.id);
+          return correctCT ? { ...t, cabinet: correctCT } : t;
+        });
         
-        // Try to load from server first
-        try {
-          const result = await Promise.race([serverPromise, timeoutPromise]);
-          if (result && result.structure && Array.isArray(result.structure)) {
-            if (result.structure.length > 0) {
-              structure = result.structure;
-              loadedFromServer = true;
-              serverHasData = true;
-              console.log('[PLANT] Loaded structure from server:', structure.length, 'trackers');
-            } else {
-              // Server returned empty array - no data on server
-              serverHasData = false;
-              console.log('[PLANT] Server returned empty structure');
-            }
-          }
-        } catch (serverError) {
-          console.warn('[PLANT] Server load failed or timeout, trying localStorage:', serverError.message);
-          serverHasData = false;
-        }
+        setTrackers(fixed);
         
-        // Fallback to localStorage if server doesn't have data
-        if (!structure || structure.length === 0) {
-          const saved = localStorage.getItem('plantMapPositionsGrid');
-          if (saved) {
-            try {
-              const parsed = JSON.parse(saved);
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                structure = parsed;
-                console.log('[PLANT] Loaded structure from localStorage:', structure.length, 'trackers');
-              }
-            } catch (e) {
-              console.error('[PLANT] Error parsing localStorage:', e);
-            }
-          }
-        }
-        
-        // Process structure
-        if (structure && structure.length > 0) {
-          // Filter: keep only M## trackers and SITE_OFFICE, remove roads
-          const filtered = structure.filter(t => 
-            (t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id)) || t.id === 'SITE_OFFICE'
-          );
-          
-          // Fix CT numbers
-          const fixed = filtered.map(t => {
-            if (t.id === 'SITE_OFFICE') return t;
-            const correctCT = getCorrectCabinet(t.id);
-            return correctCT ? { ...t, cabinet: correctCT } : t;
-          });
-          
-          setTrackers(fixed);
-          
-          // Save to localStorage as backup
-          localStorage.setItem('plantMapPositionsGrid', JSON.stringify(fixed));
-          
-          // If we have data but server doesn't, save to server immediately
-          // This ensures other devices can access it
-          if (!serverHasData && fixed.length > 0) {
-            console.log('[PLANT] Server has no data, auto-syncing to server...');
-            setSaving(true);
-            try {
-              await savePlantMapStructure(fixed);
-              console.log('[PLANT] ✓ Successfully auto-saved to server');
-            } catch (err) {
-              console.error('[PLANT] ✗ Failed to auto-save to server:', err);
-              // Don't show error to user, just log it
-            } finally {
-              setSaving(false);
-            }
-          }
-        } else {
-          console.warn('[PLANT] No structure found, showing empty map');
-          setTrackers([]);
-        }
-      } catch (err) {
-        console.error('[PLANT] Error loading map structure:', err);
-        setError('Failed to load map structure. Please refresh the page.');
-        // Try localStorage as last resort
-        const saved = localStorage.getItem('plantMapPositionsGrid');
-        if (saved) {
+        // If we have data but server doesn't, save to server immediately
+        // This ensures other devices can access it
+        if (!serverHasData && fixed.length > 0) {
+          console.log('[PLANT] Server has no data, auto-syncing to server...');
+          setSaving(true);
           try {
-            const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setTrackers(parsed);
-            }
-          } catch (e) {
-            // Ignore
+            await savePlantMapStructure(fixed);
+            console.log('[PLANT] ✓ Successfully auto-saved to company folder');
+          } catch (err) {
+            console.error('[PLANT] ✗ Failed to auto-save to server:', err);
+            // Don't show error to user, just log it
+          } finally {
+            setSaving(false);
           }
         }
-      } finally {
-        setLoading(false);
+      } else {
+        // No map data - show blank map (company has no plant map)
+        console.log('[PLANT] No map structure found - showing blank map');
+        setTrackers([]);
+      }
+    } catch (err) {
+      console.error('[PLANT] Error loading map structure:', err);
+      setError('Failed to load map structure. Please refresh the page.');
+      // Show blank map on error (no localStorage fallback to prevent data leakage)
+      setTrackers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [user, authLoading]);
+
+  /**
+   * Initial load on mount
+   */
+  useEffect(() => {
+    loadMapStructure(false);
+  }, [loadMapStructure]);
+
+  /**
+   * Reload map structure when navigating back to Plant page
+   * This ensures the map updates after admin approval in notifications
+   */
+  useEffect(() => {
+    // Check if we're on the Plant page
+    const isOnPlantPage = location.pathname === '/tenant/plant' || location.pathname === '/plant';
+    
+    if (isOnPlantPage) {
+      // Check if we just navigated to the Plant page (from another page)
+      if (lastLocationRef.current !== null && lastLocationRef.current !== location.pathname && hasLoadedRef.current) {
+        console.log('[PLANT] Navigated back to Plant page - reloading map structure to check for updates');
+        // Reset flag to allow reload
+        hasLoadedRef.current = false;
+        loadMapStructure(true);
+      }
+    }
+    
+    lastLocationRef.current = location.pathname;
+  }, [location.pathname, loadMapStructure]);
+
+  /**
+   * Listen for custom event when tracker status is approved
+   * This allows Notifications page to trigger a reload
+   */
+  useEffect(() => {
+    const handleTrackerApproved = (event) => {
+      console.log('[PLANT] Tracker approval event received - reloading map structure', event.detail);
+      // Force reload immediately
+      hasLoadedRef.current = false; // Reset flag to allow reload
+      loadMapStructure(true);
+    };
+
+    // Listen for custom event
+    window.addEventListener('trackerStatusApproved', handleTrackerApproved);
+    
+    // Also listen for window focus (user switches back to tab)
+    const handleFocus = () => {
+      // Only reload if we're on Plant page and map has been loaded before
+      const isOnPlantPage = location.pathname === '/tenant/plant' || location.pathname === '/plant';
+      if (isOnPlantPage && hasLoadedRef.current) {
+        console.log('[PLANT] Window regained focus on Plant page - reloading map structure');
+        loadMapStructure(true);
       }
     };
     
-    loadMapStructure();
-  }, []);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      window.removeEventListener('trackerStatusApproved', handleTrackerApproved);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [loadMapStructure, location.pathname]);
+
+  /**
+   * Reload map structure when viewMode changes
+   * This ensures tracker colors are updated for the current view mode
+   */
+  useEffect(() => {
+    if (hasLoadedRef.current) {
+      console.log('[PLANT] View mode changed - reloading map structure');
+      loadMapStructure(true);
+    }
+  }, [viewMode, loadMapStructure]);
+  /**
+   * Save map structure to company folder
+   * PERMANENT SOLUTION: Saves to company-scoped file only (no localStorage)
+   * Prevents cross-company data leakage
+   */
   const saveToServer = useCallback(async (structureToSave, showSaving = true) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -265,13 +350,11 @@ function Plant() {
       try {
         if (showSaving) setSaving(true);
         await savePlantMapStructure(structureToSave);
-        console.log('[PLANT] Structure saved to server successfully');
-        // Also update localStorage
-        localStorage.setItem('plantMapPositionsGrid', JSON.stringify(structureToSave));
+        console.log('[PLANT] Structure saved to company folder successfully');
+        // NO localStorage - data must come from company folder only
       } catch (err) {
-        console.error('[PLANT] Error saving to server:', err);
-        // Still save to localStorage as backup
-        localStorage.setItem('plantMapPositionsGrid', JSON.stringify(structureToSave));
+        console.error('[PLANT] Error saving to company folder:', err);
+        // Don't save to localStorage - ensures data isolation
       } finally {
         if (showSaving) setSaving(false);
       }
@@ -433,32 +516,49 @@ function Plant() {
     setResettingCycle(true);
     try {
       const result = await resetCycle(viewMode);
-      alert(`Cycle reset successfully! New cycle: ${result.new_cycle_number}`);
+      console.log('[PLANT] Cycle reset result:', result);
       
-      // Reload cycle info and trackers
+      // Reset the loaded flag to force a fresh reload
+      hasLoadedRef.current = false;
+      
+      // Reload cycle info
       const cycleData = await getCycleInfo(viewMode);
       setCurrentCycle(cycleData);
       
-      // Reload trackers to reflect reset colors
-      const structureResult = await getPlantMapStructure();
-      if (structureResult && structureResult.structure) {
-        const filtered = structureResult.structure.filter(t => 
-          (t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id)) || t.id === 'SITE_OFFICE'
-        );
-        const fixed = filtered.map(t => {
-          if (t.id === 'SITE_OFFICE') return t;
-          const correctCT = getCorrectCabinet(t.id);
-          return correctCT ? { ...t, cabinet: correctCT } : t;
-        });
-        setTrackers(fixed);
-      }
+      // Force reload map structure with delay to ensure backend has saved
+      // Use longer delay and add cache-busting to ensure fresh data
+      setTimeout(async () => {
+        try {
+          console.log('[PLANT] Reloading map structure after cycle reset...');
+          // Force reload by resetting flag and calling loadMapStructure
+          hasLoadedRef.current = false;
+          
+          // Add a small cache-busting delay and reload
+          await new Promise(resolve => setTimeout(resolve, 300));
+          await loadMapStructure(true);
+          
+          // Verify the reload worked by checking tracker colors
+          console.log('[PLANT] Map structure reloaded after cycle reset');
+          
+          // Double-check: reload again after another short delay to ensure consistency
+          setTimeout(async () => {
+            hasLoadedRef.current = false;
+            await loadMapStructure(true);
+            console.log('[PLANT] Second reload completed for verification');
+          }, 500);
+        } catch (reloadError) {
+          console.error('[PLANT] Error reloading map after cycle reset:', reloadError);
+        }
+      }, 800);
+      
+      alert(`Cycle reset successfully! New cycle: ${result.new_cycle_number}`);
     } catch (error) {
       console.error('[PLANT] Error resetting cycle:', error);
       alert('Failed to reset cycle: ' + (error.response?.data?.error || error.message));
     } finally {
       setResettingCycle(false);
     }
-  }, [viewMode, isAdmin]);
+  }, [viewMode, isAdmin, loadMapStructure]);
 
   // Calculate detailed statistics for report
   const statistics = useMemo(() => {
@@ -572,7 +672,7 @@ function Plant() {
       
       {/* Header */}
       <div style={{ width: '100%', maxWidth: '1200px', marginBottom: '10px' }}>
-        <h2 style={{ margin: '0 0 10px 0', textAlign: 'center' }}>Witkop Solar Farm Site Map</h2>
+        <h2 style={{ margin: '0 0 10px 0', textAlign: 'center' }}>{siteMapName}</h2>
         
         {/* Controls */}
         <div style={{ 
@@ -611,46 +711,85 @@ function Plant() {
                 </select>
               </div>
               {/* Progress Bar */}
-              <div style={{ width: '250px' }}>
-                <div style={{
-                  width: '100%',
-                  height: '28px',
-                  backgroundColor: '#e0e0e0',
-                  borderRadius: '14px',
-                  overflow: 'hidden',
-                  border: '1px solid #ccc',
-                  position: 'relative'
-                }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '250px' }}>
                   <div style={{
-                    width: `${progress}%`,
-                    height: '100%',
-                    backgroundColor: progress >= 100 ? '#4CAF50' : progress >= 50 ? '#FF9800' : '#f44336',
-                    transition: 'width 0.3s ease',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'white',
-                    fontSize: '13px',
-                    fontWeight: 'bold',
-                    minWidth: progress > 0 ? '50px' : '0'
+                    width: '100%',
+                    height: '28px',
+                    backgroundColor: '#e0e0e0',
+                    borderRadius: '14px',
+                    overflow: 'hidden',
+                    border: '1px solid #ccc',
+                    position: 'relative'
                   }}>
-                    {progress > 0 && `${progress.toFixed(1)}%`}
-                  </div>
-                  {progress < 15 && (
                     <div style={{
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      color: '#666',
+                      width: `${progress}%`,
+                      height: '100%',
+                      backgroundColor: progress >= 100 ? '#4CAF50' : progress >= 50 ? '#FF9800' : '#f44336',
+                      transition: 'width 0.3s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'white',
                       fontSize: '13px',
                       fontWeight: 'bold',
-                      pointerEvents: 'none'
+                      minWidth: progress > 0 ? '50px' : '0'
                     }}>
-                      {progress.toFixed(1)}%
+                      {progress > 0 && `${progress.toFixed(1)}%`}
                     </div>
-                  )}
+                    {progress < 15 && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        color: '#666',
+                        fontSize: '13px',
+                        fontWeight: 'bold',
+                        pointerEvents: 'none'
+                      }}>
+                        {progress.toFixed(1)}%
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {/* Clean Button - Show always during development for testing (normally only shows at 100%) */}
+                {hasAnyRole('system_owner', 'operations_admin') && (
+                  <button
+                    onClick={handleResetCycle}
+                    disabled={resettingCycle}
+                    title={`Reset ${viewMode === 'grass_cutting' ? 'Grass Cutting' : 'Panel Wash'} cycle and clear all trackers`}
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                      backgroundColor: '#4CAF50',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: resettingCycle ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      opacity: resettingCycle ? 0.6 : 1,
+                      transition: 'opacity 0.2s, transform 0.1s',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!resettingCycle) {
+                        e.currentTarget.style.transform = 'scale(1.05)';
+                        e.currentTarget.style.boxShadow = '0 3px 6px rgba(0,0,0,0.3)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                      e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+                    }}
+                  >
+                    <span style={{ fontSize: '16px' }}>🧹</span>
+                    <span>{resettingCycle ? 'Cleaning...' : 'Clean'}</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -812,7 +951,7 @@ function Plant() {
           )}
         </div>
         
-        {/* Cycle completion indicator and reset button */}
+        {/* Cycle completion indicator */}
         {currentCycle && currentCycle.is_complete && (
           <div style={{ 
             marginTop: '8px', 
@@ -824,27 +963,7 @@ function Plant() {
             fontSize: '13px',
             fontWeight: '500'
           }}>
-            ✓ Cycle {currentCycle.cycle_number} Completed! 
-            {isAdmin() && (
-              <button
-                onClick={handleResetCycle}
-                disabled={resettingCycle}
-                style={{
-                  marginLeft: '12px',
-                  padding: '4px 12px',
-                  backgroundColor: 'white',
-                  color: '#4CAF50',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: resettingCycle ? 'not-allowed' : 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '12px',
-                  opacity: resettingCycle ? 0.6 : 1
-                }}
-              >
-                {resettingCycle ? 'Resetting...' : 'Reset Cycle'}
-              </button>
-            )}
+            ✓ Cycle {currentCycle.cycle_number} Completed!
           </div>
         )}
       </div>

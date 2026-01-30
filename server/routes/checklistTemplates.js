@@ -4,42 +4,74 @@ const path = require('path');
 const fs = require('fs');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbac');
+const { 
+  getOrganizationSlugFromRequest, 
+  getStoragePath, 
+  getFileUrl,
+  ensureCompanyDirs 
+} = require('../utils/organizationStorage');
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '../uploads/templates');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
+module.exports = (pool) => {
+  // Configure multer for file uploads (company-scoped by slug)
+  const storage = multer.diskStorage({
+    destination: async (req, file, cb) => {
+      try {
+        const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+        
+        if (!organizationSlug) {
+          return cb(new Error('Organization context is required for file uploads'));
+        }
+
+        // Ensure company directories exist
+        await ensureCompanyDirs(organizationSlug);
+        
+        // Get company-scoped templates directory
+        const uploadDir = getStoragePath(organizationSlug, 'templates');
+        cb(null, uploadDir);
+      } catch (error) {
+        cb(error);
+      }
+    },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
 
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
-  fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (['.xlsx', '.xls', '.docx'].includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only Excel (.xlsx, .xls) and Word (.docx) files are allowed'));
+  const upload = multer({
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+    fileFilter: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      if (['.xlsx', '.xls', '.docx'].includes(ext)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only Excel (.xlsx, .xls) and Word (.docx) files are allowed'));
+      }
     }
-  }
-});
+  });
 
-module.exports = (pool) => {
   const router = express.Router();
 
   // Get all checklist templates
   router.get('/', async (req, res) => {
     try {
-      const result = await pool.query('SELECT * FROM checklist_templates ORDER BY template_code');
+      // System owners without a selected company should see no templates
+      const { isSystemOwnerWithoutCompany, getOrganizationIdFromRequest } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.json([]);
+      }
+      
+      // Get organization ID from request context (for explicit filtering)
+      const organizationId = getOrganizationIdFromRequest(req);
+      if (!organizationId) {
+        return res.json([]);
+      }
+      
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      const result = await db.query('SELECT * FROM checklist_templates WHERE organization_id = $1 ORDER BY template_code', [organizationId]);
       // Parse JSONB fields for all templates
       const templates = result.rows.map(template => {
         if (template.checklist_structure && typeof template.checklist_structure === 'string') {
@@ -63,7 +95,17 @@ module.exports = (pool) => {
   // Get checklist template by ID
   router.get('/:id', async (req, res) => {
     try {
-      const result = await pool.query('SELECT * FROM checklist_templates WHERE id = $1', [req.params.id]);
+      // System owners without a selected company should see no templates
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.status(404).json({ error: 'Template not found' });
+      }
+      
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      const result = await db.query('SELECT * FROM checklist_templates WHERE id = $1', [req.params.id]);
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Checklist template not found' });
       }
@@ -90,7 +132,17 @@ module.exports = (pool) => {
   // Get checklist templates by asset type
   router.get('/asset-type/:assetType', async (req, res) => {
     try {
-      const result = await pool.query(
+      // System owners without a selected company should see no templates
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.json([]);
+      }
+      
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      const result = await db.query(
         'SELECT * FROM checklist_templates WHERE asset_type = $1 ORDER BY template_code',
         [req.params.assetType]
       );

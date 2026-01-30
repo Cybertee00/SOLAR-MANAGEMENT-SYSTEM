@@ -4,9 +4,120 @@ const fs = require('fs');
 const { parsePlantMap } = require('../utils/plantMapParser');
 const { requireAuth, requireAdmin, isAdmin, isSuperAdmin } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
+const { getCompanySubDir, getOrganizationSlugFromRequest } = require('../utils/organizationStorage');
 
 module.exports = (pool) => {
   const router = express.Router();
+
+  /**
+   * Helper function to save map structure to company-scoped file
+   *
+   * IMPORTANT: This function now correctly handles system owners who have selected a company.
+   * System owners have organizationId = null but CAN have a valid organizationSlug from their
+   * selected company (stored in session). We get organizationSlug FIRST to ensure file saves
+   * work for system owners.
+   *
+   * @param {Object} req - Express request object
+   * @param {Array} structure - Map structure array
+   * @param {number} version - Version number
+   * @param {string} organizationId - Organization ID (optional, can be null for system owners)
+   * @returns {Promise<{success: boolean, error?: string, filePath?: string, skipped?: boolean}>}
+   */
+  async function saveMapStructureToFile(req, structure, version, organizationId = null) {
+    try {
+      // CRITICAL FIX: Get organizationSlug FIRST, before checking organizationId
+      // This ensures system owners who have selected a company can still save files
+      // Even though their organizationId is null, they have a valid organizationSlug
+      const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+
+      // If no organizationId provided, try to get it from user's record (for non-system-owners)
+      if (!organizationId) {
+        if (req.session && req.session.userId) {
+          try {
+            const userResult = await pool.query(
+              'SELECT organization_id, role, roles FROM users WHERE id = $1',
+              [req.session.userId]
+            );
+            if (userResult.rows.length > 0) {
+              const user = userResult.rows[0];
+              const userRoles = user.roles ? (typeof user.roles === 'string' ? JSON.parse(user.roles) : user.roles) : [user.role];
+              const isSystemOwner = userRoles.includes('system_owner') || user.role === 'system_owner' || userRoles.includes('super_admin') || user.role === 'super_admin';
+              // For non-system-owners, use their organization_id
+              if (!isSystemOwner && user.organization_id) {
+                organizationId = user.organization_id;
+              }
+              // For system owners: organizationId stays null, but we already have organizationSlug
+            }
+          } catch (dbError) {
+            console.error('[PLANT] Error fetching user organization_id for file save:', dbError);
+            // Continue - we might still have organizationSlug
+          }
+        }
+      }
+
+      // CRITICAL: Skip only if we have NEITHER organizationId NOR organizationSlug
+      // System owners will have organizationSlug but not organizationId - that's OK!
+      if (!organizationSlug) {
+        console.log('[PLANT] No organization slug found, skipping file save');
+        console.log('[PLANT] (This is expected for system owners who have not selected a company)');
+        return { success: true, skipped: true };
+      }
+
+      // We have organizationSlug - proceed with file save
+      // organizationId may be null for system owners, and that's OK
+      console.log(`[PLANT] Saving map structure for organization slug: ${organizationSlug} (organizationId: ${organizationId || 'null - system owner'})`);
+
+      const plantDir = getCompanySubDir(organizationSlug, 'plant');
+      const mapFilePath = path.join(plantDir, 'map-structure.json');
+
+      // Ensure directory exists
+      try {
+        if (!fs.existsSync(plantDir)) {
+          fs.mkdirSync(plantDir, { recursive: true });
+          console.log(`[PLANT] Created plant directory: ${plantDir}`);
+        }
+      } catch (dirError) {
+        console.error('[PLANT] Error creating plant directory:', dirError);
+        return { success: false, error: `Failed to create directory: ${dirError.message}` };
+      }
+
+      const mapData = {
+        structure: structure,
+        version: version,
+        updated_at: new Date().toISOString(),
+        organization_id: organizationId, // Can be null for system owners
+        organization_slug: organizationSlug
+      };
+
+      // Validate structure before saving
+      if (!Array.isArray(structure)) {
+        return { success: false, error: 'Structure must be an array' };
+      }
+
+      // Write file with error handling
+      try {
+        fs.writeFileSync(mapFilePath, JSON.stringify(mapData, null, 2), { encoding: 'utf8', flag: 'w' });
+        console.log(`[PLANT] ✅ Saved map structure to company folder: ${mapFilePath} (version ${version}, ${structure.length} trackers)`);
+        return { success: true, filePath: mapFilePath };
+      } catch (writeError) {
+        console.error('[PLANT] ❌ Error writing map structure file:', {
+          error: writeError.message,
+          code: writeError.code,
+          path: mapFilePath,
+          stack: writeError.stack
+        });
+        return { success: false, error: `Failed to write file: ${writeError.message}` };
+      }
+    } catch (error) {
+      console.error('[PLANT] ❌ Unexpected error in saveMapStructureToFile:', {
+        error: error.message,
+        stack: error.stack,
+        organizationId,
+        version
+      });
+      return { success: false, error: `Unexpected error: ${error.message}` };
+    }
+  }
 
   // Get parsed plant map data (from Excel - legacy)
   router.get('/map-data', async (req, res) => {
@@ -22,37 +133,66 @@ module.exports = (pool) => {
     }
   });
 
-  // Get plant map structure from database
+  // Get plant map structure from company-scoped folder
   router.get('/structure', async (req, res) => {
     try {
       console.log('[PLANT] Request received for /structure');
-      const result = await pool.query(`
-        SELECT structure_data, version, updated_at
-        FROM plant_map_structure
-        ORDER BY version DESC
-        LIMIT 1
-      `);
       
-      if (result.rows.length === 0 || !result.rows[0].structure_data || result.rows[0].structure_data.length === 0) {
-        console.log('[PLANT] No structure found in database, returning empty array');
+      // System owners without a selected company should see no plant data
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
         return res.json({ structure: [], version: 0 });
       }
       
-      // structure_data is already a JSON object (not a string) because it's JSONB
-      let structure = result.rows[0].structure_data;
+      // Get organization slug from request context
+      const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
       
-      // If it's a string, parse it
-      if (typeof structure === 'string') {
+      // If no organization slug, return empty structure (system owner without company)
+      if (!organizationSlug) {
+        console.log('[PLANT] No organization context, returning empty structure');
+        return res.json({ structure: [], version: 0 });
+      }
+      
+      // Try to load from company-scoped plant folder first
+      const plantDir = getCompanySubDir(organizationSlug, 'plant');
+      const mapFilePath = path.join(plantDir, 'map-structure.json');
+      
+      if (fs.existsSync(mapFilePath)) {
         try {
-          structure = JSON.parse(structure);
-        } catch (e) {
-          console.error('[PLANT] Error parsing structure_data:', e);
-          return res.json({ structure: [], version: 0 });
+          const fileContent = fs.readFileSync(mapFilePath, 'utf8');
+          if (!fileContent || fileContent.trim().length === 0) {
+            console.warn('[PLANT] Map structure file is empty, falling back to database');
+            // Fall through to database fallback
+          } else {
+            const mapData = JSON.parse(fileContent);
+            if (!mapData || !Array.isArray(mapData.structure)) {
+              console.warn('[PLANT] Invalid map structure format in file, falling back to database');
+              // Fall through to database fallback
+            } else {
+              console.log(`[PLANT] ✅ Loaded map structure from file (version ${mapData.version}) with ${mapData.structure.length} trackers`);
+              return res.json({ 
+                structure: mapData.structure, 
+                version: mapData.version || 0 
+              });
+            }
+          }
+        } catch (fileError) {
+          console.error('[PLANT] ❌ Error reading map structure file:', {
+            error: fileError.message,
+            code: fileError.code,
+            path: mapFilePath,
+            stack: fileError.stack
+          });
+          // Fall through to database fallback
         }
       }
       
-      const version = result.rows[0].version;
-      console.log(`[PLANT] Returning structure with ${Array.isArray(structure) ? structure.length : 0} trackers, version ${version}`);
+      // NO DATABASE FALLBACK - Plant maps must be in company folder
+      // This ensures data isolation - each company has its own map
+      console.log('[PLANT] Map structure file not found in company folder, returning empty structure');
+      console.log('[PLANT] Plant maps must be stored in: uploads/companies/{slug}/plant/map-structure.json');
+      return res.json({ structure: [], version: 0 });
+      console.log(`[PLANT] Returning structure from database with ${Array.isArray(structure) ? structure.length : 0} trackers, version ${version}`);
       
       res.json({ structure: Array.isArray(structure) ? structure : [], version });
     } catch (error) {
@@ -72,10 +212,35 @@ module.exports = (pool) => {
       
       console.log(`[PLANT] Saving structure with ${structure.length} trackers`);
       
-      // Get current version
-      const currentResult = await pool.query(`
-        SELECT version FROM plant_map_structure ORDER BY version DESC LIMIT 1
-      `);
+      // Get user's organization_id (if authenticated)
+      let organizationId = null;
+      if (req.session && req.session.userId) {
+        const userResult = await pool.query(
+          'SELECT organization_id, role, roles FROM users WHERE id = $1',
+          [req.session.userId]
+        );
+        if (userResult.rows.length > 0) {
+          const user = userResult.rows[0];
+          const userRoles = user.roles ? (typeof user.roles === 'string' ? JSON.parse(user.roles) : user.roles) : [user.role];
+          const isSystemOwner = userRoles.includes('system_owner') || user.role === 'system_owner' || userRoles.includes('super_admin') || user.role === 'super_admin';
+          // For system_owner users, organization_id can be NULL
+          // For regular tenant users, use their organization_id
+          if (!isSystemOwner && user.organization_id) {
+            organizationId = user.organization_id;
+          }
+        }
+      }
+      
+      // Get current version (filtered by organization_id if available)
+      let versionQuery = 'SELECT version FROM plant_map_structure';
+      const versionParams = [];
+      if (organizationId) {
+        versionQuery += ' WHERE organization_id = $1';
+        versionParams.push(organizationId);
+      }
+      versionQuery += ' ORDER BY version DESC LIMIT 1';
+      
+      const currentResult = await pool.query(versionQuery, versionParams);
       
       const newVersion = currentResult.rows.length > 0 
         ? currentResult.rows[0].version + 1 
@@ -83,9 +248,15 @@ module.exports = (pool) => {
       
       // Insert new version
       await pool.query(`
-        INSERT INTO plant_map_structure (structure_data, version)
-        VALUES ($1, $2)
-      `, [JSON.stringify(structure), newVersion]);
+        INSERT INTO plant_map_structure (structure_data, version, organization_id)
+        VALUES ($1, $2, $3)
+      `, [JSON.stringify(structure), newVersion, organizationId]);
+      
+      // Also save to company-scoped folder (if organization context exists)
+      const fileSaveResult = await saveMapStructureToFile(req, structure, newVersion, organizationId);
+      if (!fileSaveResult.success && !fileSaveResult.skipped) {
+        console.warn('[PLANT] ⚠️ File save failed (non-critical):', fileSaveResult.error);
+      }
       
       console.log(`[PLANT] Structure saved successfully, version ${newVersion}`);
       
@@ -96,16 +267,37 @@ module.exports = (pool) => {
     }
   });
 
-  // Serve the grasscutting Excel file
-  router.get('/grasscutting.xlsx', (req, res) => {
+  // Serve the grasscutting Excel file from company-scoped folder
+  router.get('/grasscutting.xlsx', async (req, res) => {
     try {
-      const filePath = path.join(__dirname, '../plant/grasscutting.xlsx');
+      // Get organization slug from request context
+      const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+      
+      let filePath = null;
+      let plantDir = null;
+      
+      // Try company-scoped folder first (if organization context exists)
+      if (organizationSlug) {
+        plantDir = getCompanySubDir(organizationSlug, 'plant');
+        filePath = path.join(plantDir, 'grasscutting.xlsx');
+      
+        // Fallback to old location if not found in company folder
+        if (!fs.existsSync(filePath)) {
+          filePath = path.join(__dirname, '../plant/grasscutting.xlsx');
+        }
+      } else {
+        // No organization context, use old location
+        filePath = path.join(__dirname, '../plant/grasscutting.xlsx');
+      }
       
       // Security check: prevent directory traversal
       const resolvedPath = path.resolve(filePath);
-      const plantDir = path.resolve(__dirname, '../plant');
+      const allowedDirs = plantDir 
+        ? [path.resolve(plantDir), path.resolve(__dirname, '../plant')]
+        : [path.resolve(__dirname, '../plant')];
       
-      if (!resolvedPath.startsWith(plantDir)) {
+      const isAllowed = allowedDirs.some(allowedDir => resolvedPath.startsWith(allowedDir));
+      if (!isAllowed) {
         console.error('[PLANT] Directory traversal blocked');
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -203,21 +395,36 @@ module.exports = (pool) => {
         });
       }
 
-      // Get user info
-      const userResult = await pool.query('SELECT full_name, username FROM users WHERE id = $1', [userId]);
+      // Get user info including organization_id and roles
+      const userResult = await pool.query(
+        'SELECT full_name, username, organization_id, role, roles FROM users WHERE id = $1', 
+        [userId]
+      );
       if (userResult.rows.length === 0) {
         console.error('[PLANT] User not found in database:', userId);
         return res.status(404).json({ error: 'User not found' });
       }
       const user = userResult.rows[0];
 
+      // Check if user is system_owner (platform creator - doesn't belong to any organization)
+      const userRoles = user.roles ? (typeof user.roles === 'string' ? JSON.parse(user.roles) : user.roles) : [user.role];
+      const isSystemOwner = userRoles.includes('system_owner') || user.role === 'system_owner' || userRoles.includes('super_admin') || user.role === 'super_admin';
+
+      // For system_owner users, organization_id can be NULL
+      // For regular tenant users, organization_id is required
+      if (!isSystemOwner && !user.organization_id) {
+        console.error('[PLANT] User has no organization_id:', userId);
+        return res.status(400).json({ error: 'User is not associated with an organization' });
+      }
+
       // Create request
       // Note: tracker_ids is a TEXT[] array in PostgreSQL, so we pass it as an array
+      // organization_id can be NULL for system_owner users
       const result = await pool.query(
-        `INSERT INTO tracker_status_requests (user_id, tracker_ids, task_type, status_type, message, status)
-         VALUES ($1, $2, $3, $4, $5, 'pending')
+        `INSERT INTO tracker_status_requests (user_id, organization_id, tracker_ids, task_type, status_type, message, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending')
          RETURNING *`,
-        [userId, tracker_ids, task_type, status_type, message || null]
+        [userId, user.organization_id || null, tracker_ids, task_type, status_type, message || null]
       );
 
       const request = result.rows[0];
@@ -282,7 +489,15 @@ module.exports = (pool) => {
             console.log(`[PLANT] ⚠️ Duplicate notification prevented by idempotency_key for admin ${admin.id} (${admin.username}) for request ${request.id}`);
             continue;
           }
-          console.error(`[PLANT] ❌ Error creating notification for admin ${admin.id}:`, notifError);
+          console.error(`[PLANT] ❌ Error creating notification for admin ${admin.id} (${admin.username}):`, {
+            error: notifError.message,
+            code: notifError.code,
+            detail: notifError.detail,
+            stack: notifError.stack,
+            admin_id: admin.id,
+            admin_username: admin.username,
+            request_id: request.id
+          });
           // Continue with other admins even if one fails
         }
       }
@@ -390,9 +605,9 @@ module.exports = (pool) => {
         return res.status(400).json({ error: 'action must be "approve" or "reject"' });
       }
 
-      // Check if user is admin or super admin
+      // Check if user is admin or super admin and get organization_id
       const userResult = await pool.query(
-        `SELECT role, roles FROM users WHERE id = $1`,
+        `SELECT role, roles, organization_id FROM users WHERE id = $1`,
         [reviewerId]
       );
       
@@ -407,6 +622,11 @@ module.exports = (pool) => {
       if (!isAdminUser) {
         return res.status(403).json({ error: 'Only admins can review tracker status requests' });
       }
+
+      // Get organization_id for plant_map_structure update
+      // For system_owner users, organization_id can be NULL
+      const isSystemOwner = userRoles.includes('system_owner') || user.role === 'system_owner' || userRoles.includes('super_admin') || user.role === 'super_admin';
+      const organizationId = (!isSystemOwner && user.organization_id) ? user.organization_id : null;
 
       // Get the request
       const requestResult = await pool.query(
@@ -442,51 +662,118 @@ module.exports = (pool) => {
 
       // If approved, update the plant map structure
       if (action === 'approve') {
-        // Get current structure
-        const structureResult = await pool.query(
-          `SELECT structure_data FROM plant_map_structure ORDER BY version DESC LIMIT 1`
-        );
+        // CRITICAL FIX: Load structure from FILE first (to ensure consistency with reset cycle)
+        // This matches the reset cycle and GET /structure endpoint behavior
+        const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+        let structure = null;
+        let currentVersion = 0;
+        
+        if (organizationSlug) {
+          const plantDir = getCompanySubDir(organizationSlug, 'plant');
+          const mapFilePath = path.join(plantDir, 'map-structure.json');
+          
+          if (fs.existsSync(mapFilePath)) {
+            try {
+              const fileContent = fs.readFileSync(mapFilePath, 'utf8');
+              if (fileContent && fileContent.trim().length > 0) {
+                const mapData = JSON.parse(fileContent);
+                if (mapData && Array.isArray(mapData.structure)) {
+                  structure = mapData.structure;
+                  currentVersion = mapData.version || 0;
+                  console.log(`[PLANT] Loaded structure from file for approval (version ${currentVersion}, ${structure.length} trackers)`);
+                }
+              }
+            } catch (fileError) {
+              console.error('[PLANT] Error reading map structure file for approval:', fileError);
+            }
+          }
+        }
+        
+        // Fallback to database if file doesn't exist
+        if (!structure) {
+          console.log('[PLANT] File not found, loading from database for approval');
+          let structureQuery = 'SELECT structure_data, version FROM plant_map_structure';
+          const structureParams = [];
+          if (organizationId) {
+            structureQuery += ' WHERE organization_id = $1';
+            structureParams.push(organizationId);
+          }
+          structureQuery += ' ORDER BY version DESC LIMIT 1';
+          
+          const structureResult = await pool.query(structureQuery, structureParams);
 
-        if (structureResult.rows.length > 0 && structureResult.rows[0].structure_data) {
-          let structure = structureResult.rows[0].structure_data;
+          if (structureResult.rows.length === 0 || !structureResult.rows[0].structure_data) {
+            console.error('[PLANT] No structure found in database for approval');
+            return res.status(404).json({ error: 'Plant map structure not found' });
+          }
+
+          structure = structureResult.rows[0].structure_data;
+          currentVersion = structureResult.rows[0].version || 0;
           if (typeof structure === 'string') {
             structure = JSON.parse(structure);
           }
-
-          // Update tracker colors based on status_type
-          const colorKey = request.task_type === 'grass_cutting' ? 'grassCuttingColor' : 'panelWashColor';
-          const doneColor = '#90EE90'; // Light green for done
-          const halfwayColor = '#FFD700'; // Gold for halfway
-
-          const newColor = request.status_type === 'done' ? doneColor : halfwayColor;
-
-          structure.forEach(tracker => {
-            if (request.tracker_ids.includes(tracker.id)) {
-              tracker[colorKey] = newColor;
-            }
-          });
-
-          // Save updated structure
-          const currentVersionResult = await pool.query(
-            `SELECT version FROM plant_map_structure ORDER BY version DESC LIMIT 1`
-          );
-          const newVersion = currentVersionResult.rows.length > 0 
-            ? currentVersionResult.rows[0].version + 1 
-            : 1;
-
-          await pool.query(
-            `INSERT INTO plant_map_structure (structure_data, version)
-             VALUES ($1, $2)`,
-            [JSON.stringify(structure), newVersion]
-          );
-
-          // Ensure cycle exists (create Cycle 1 if task just started)
-          await ensureCycleExists(request.task_type);
-
-          // Check if cycle should be marked as complete after status update
-          const progressData = calculateProgress(structure, request.task_type);
-          await checkAndMarkCycleComplete(request.task_type, progressData.progress);
         }
+        
+        if (!Array.isArray(structure)) {
+          console.error('[PLANT] Invalid structure format for approval');
+          return res.status(500).json({ error: 'Invalid map structure format' });
+        }
+
+        // Update tracker colors based on status_type
+        const colorKey = request.task_type === 'grass_cutting' ? 'grassCuttingColor' : 'panelWashColor';
+        const doneColor = '#90EE90'; // Light green for done
+        const halfwayColor = '#FFD700'; // Gold for halfway
+
+        const newColor = request.status_type === 'done' ? doneColor : halfwayColor;
+
+        let updatedCount = 0;
+        structure.forEach(tracker => {
+          if (request.tracker_ids.includes(tracker.id)) {
+            const oldColor = tracker[colorKey];
+            tracker[colorKey] = newColor;
+            if (oldColor !== newColor) {
+              updatedCount++;
+            }
+          }
+        });
+        
+        console.log(`[PLANT] Updated ${updatedCount} tracker(s) ${colorKey} to ${newColor} for approval`);
+
+        // Save updated structure
+        // Use currentVersion from file/database + 1
+        const newVersion = currentVersion + 1;
+        console.log(`[PLANT] Saving structure with version ${newVersion} (previous: ${currentVersion}) for approval`);
+
+        // Save to database
+        await pool.query(
+          `INSERT INTO plant_map_structure (structure_data, version, organization_id)
+           VALUES ($1, $2, $3)`,
+          [JSON.stringify(structure), newVersion, organizationId]
+        );
+        console.log(`[PLANT] ✅ Saved structure to database (version ${newVersion}, organizationId: ${organizationId || 'NULL'}) for approval`);
+        
+        // CRITICAL: Save to company-scoped folder (frontend loads from file)
+        // saveMapStructureToFile() now correctly handles system owners by using organizationSlug
+        const fileSaveResult = await saveMapStructureToFile(req, structure, newVersion, organizationId);
+
+        if (!fileSaveResult.success && !fileSaveResult.skipped) {
+          // File save actually failed (not just skipped)
+          console.error('[PLANT] ❌ File save failed for approval:', fileSaveResult.error);
+          // Don't return error - approval should still succeed even if file save fails
+          // But log it for debugging
+        } else if (fileSaveResult.skipped) {
+          // File save was skipped - this should only happen if system owner has no company selected
+          console.warn('[PLANT] ⚠️ File save skipped for approval (no organization context - system owner without selected company)');
+        } else {
+          console.log(`[PLANT] ✅ Successfully saved map structure to file for approval (version ${newVersion}, ${structure.length} trackers)`);
+        }
+
+        // Ensure cycle exists (create Cycle 1 if task just started)
+        await ensureCycleExists(request.task_type);
+
+        // Check if cycle should be marked as complete after status update
+        const progressData = calculateProgress(structure, request.task_type);
+        await checkAndMarkCycleComplete(request.task_type, progressData.progress);
       }
 
       // Get requester info
@@ -652,10 +939,33 @@ module.exports = (pool) => {
         return res.status(400).json({ error: 'Invalid task_type. Must be "grass_cutting" or "panel_wash"' });
       }
 
+      // Get user's organization_id for filtering
+      let organizationId = null;
+      if (req.session && req.session.userId) {
+        const userResult = await pool.query(
+          'SELECT organization_id, role, roles FROM users WHERE id = $1',
+          [req.session.userId]
+        );
+        if (userResult.rows.length > 0) {
+          const user = userResult.rows[0];
+          const userRoles = user.roles ? (typeof user.roles === 'string' ? JSON.parse(user.roles) : user.roles) : [user.role];
+          const isSystemOwner = userRoles.includes('system_owner') || user.role === 'system_owner' || userRoles.includes('super_admin') || user.role === 'super_admin';
+          if (!isSystemOwner && user.organization_id) {
+            organizationId = user.organization_id;
+          }
+        }
+      }
+      
       // Calculate current progress first to check if task has started
-      const structureResult = await pool.query(`
-        SELECT structure_data FROM plant_map_structure ORDER BY version DESC LIMIT 1
-      `);
+      let structureQuery = 'SELECT structure_data FROM plant_map_structure';
+      const structureParams = [];
+      if (organizationId) {
+        structureQuery += ' WHERE organization_id = $1';
+        structureParams.push(organizationId);
+      }
+      structureQuery += ' ORDER BY version DESC LIMIT 1';
+      
+      const structureResult = await pool.query(structureQuery, structureParams);
 
       let progress = 0;
       let doneCount = 0;
@@ -755,9 +1065,9 @@ module.exports = (pool) => {
         return res.status(400).json({ error: 'Invalid task_type. Must be "grass_cutting" or "panel_wash"' });
       }
 
-      // Check if user is admin
+      // Check if user is admin and get organization_id
       const userResult = await pool.query(
-        `SELECT role, roles FROM users WHERE id = $1`,
+        `SELECT role, roles, organization_id FROM users WHERE id = $1`,
         [userId]
       );
       
@@ -774,50 +1084,104 @@ module.exports = (pool) => {
         return res.status(403).json({ error: 'Only admins can reset cycles' });
       }
 
-      // Get current structure
-      const structureResult = await pool.query(`
-        SELECT structure_data FROM plant_map_structure ORDER BY version DESC LIMIT 1
-      `);
+      // Get organization_id for plant_map_structure update
+      // For system_owner users, organization_id can be NULL
+      const isSystemOwner = userRoles.includes('system_owner') || user.role === 'system_owner' || userRoles.includes('super_admin') || user.role === 'super_admin';
+      const organizationId = (!isSystemOwner && user.organization_id) ? user.organization_id : null;
 
-      if (structureResult.rows.length === 0 || !structureResult.rows[0].structure_data) {
-        return res.status(404).json({ error: 'Plant map structure not found' });
+      // Load structure from FILE first (to ensure consistency with frontend)
+      // This matches the GET /structure endpoint behavior
+      const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+      let structure = null;
+      let currentVersion = 0;
+      
+      if (organizationSlug) {
+        const plantDir = getCompanySubDir(organizationSlug, 'plant');
+        const mapFilePath = path.join(plantDir, 'map-structure.json');
+        
+        if (fs.existsSync(mapFilePath)) {
+          try {
+            const fileContent = fs.readFileSync(mapFilePath, 'utf8');
+            if (fileContent && fileContent.trim().length > 0) {
+              const mapData = JSON.parse(fileContent);
+              if (mapData && Array.isArray(mapData.structure)) {
+                structure = mapData.structure;
+                currentVersion = mapData.version || 0;
+                console.log(`[PLANT] Loaded structure from file for cycle reset (version ${currentVersion}, ${structure.length} trackers)`);
+              }
+            }
+          } catch (fileError) {
+            console.error('[PLANT] Error reading map structure file for cycle reset:', fileError);
+          }
+        }
+      }
+      
+      // Fallback to database if file doesn't exist
+      if (!structure) {
+        console.log('[PLANT] File not found, loading from database for cycle reset');
+        let structureQuery = 'SELECT structure_data, version FROM plant_map_structure';
+        const structureParams = [];
+        if (organizationId) {
+          structureQuery += ' WHERE organization_id = $1';
+          structureParams.push(organizationId);
+        }
+        structureQuery += ' ORDER BY version DESC LIMIT 1';
+        
+        const structureResult = await pool.query(structureQuery, structureParams);
+
+        if (structureResult.rows.length === 0 || !structureResult.rows[0].structure_data) {
+          return res.status(404).json({ error: 'Plant map structure not found' });
+        }
+
+        structure = structureResult.rows[0].structure_data;
+        currentVersion = structureResult.rows[0].version || 0;
+        if (typeof structure === 'string') {
+          structure = JSON.parse(structure);
+        }
+      }
+      
+      if (!Array.isArray(structure)) {
+        return res.status(500).json({ error: 'Invalid map structure format' });
       }
 
-      let structure = structureResult.rows[0].structure_data;
-      if (typeof structure === 'string') {
-        structure = JSON.parse(structure);
-      }
-
-      // Get current cycle
+      // Get current cycle (or last cycle if no active cycle exists)
       const cycleResult = await pool.query(`
         SELECT id, cycle_number, completed_at
         FROM tracker_cycles
-        WHERE task_type = $1 AND completed_at IS NULL
+        WHERE task_type = $1
         ORDER BY cycle_number DESC
         LIMIT 1
       `, [task_type]);
 
-      if (cycleResult.rows.length === 0) {
-        return res.status(404).json({ error: 'No active cycle found' });
+      let currentCycle = null;
+      let newCycleNumber = 1;
+      let previousCycleNumber = null;
+
+      if (cycleResult.rows.length > 0) {
+        currentCycle = cycleResult.rows[0];
+        previousCycleNumber = currentCycle.cycle_number;
+        // If there's an incomplete cycle, complete it; otherwise start a new cycle
+        if (!currentCycle.completed_at) {
+          // Mark current cycle as completed
+          const now = new Date();
+          const year = now.getFullYear();
+          const month = now.getMonth() + 1;
+          await pool.query(`
+            UPDATE tracker_cycles
+            SET completed_at = $1, year = $2, month = $3, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $4
+          `, [now, year, month, currentCycle.id]);
+        }
+        // Start next cycle
+        newCycleNumber = currentCycle.cycle_number + 1;
       }
+      // If no cycles exist at all, start with Cycle 1
 
-      const currentCycle = cycleResult.rows[0];
-
-      // Mark current cycle as completed if not already
+      // Create new cycle
       const now = new Date();
       const year = now.getFullYear();
       const month = now.getMonth() + 1;
-
-      if (!currentCycle.completed_at) {
-        await pool.query(`
-          UPDATE tracker_cycles
-          SET completed_at = $1, year = $2, month = $3, updated_at = CURRENT_TIMESTAMP
-          WHERE id = $4
-        `, [now, year, month, currentCycle.id]);
-      }
-
-      // Create new cycle
-      const newCycleNumber = currentCycle.cycle_number + 1;
+      
       const newCycleResult = await pool.query(`
         INSERT INTO tracker_cycles (task_type, cycle_number, started_at, year, month, reset_by, reset_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -826,33 +1190,165 @@ module.exports = (pool) => {
 
       const newCycle = newCycleResult.rows[0];
 
-      // Reset all tracker colors to white for this task type
-      const colorKey = task_type === 'grass_cutting' ? 'grassCuttingColor' : 'panelWashColor';
+      // Reset ALL tracker colors to white for BOTH task types
+      // CRITICAL FIX: Reset both grassCuttingColor AND panelWashColor to prevent "hardcoded" colors
+      // This ensures a completely fresh start - all trackers will be white and waiting for new updates
+      let resetGrassCount = 0;
+      let resetPanelCount = 0;
+      let totalTrackers = 0;
+      
       structure.forEach(tracker => {
         if (tracker.id && tracker.id.startsWith('M') && /^M\d{2}$/.test(tracker.id)) {
-          tracker[colorKey] = '#ffffff';
+          totalTrackers++;
+          
+          // Aggressively reset grassCuttingColor - delete first, then set to white
+          const oldGrassColor = tracker.grassCuttingColor;
+          delete tracker.grassCuttingColor; // Remove property completely
+          tracker.grassCuttingColor = '#ffffff'; // Set to white
+          if (oldGrassColor && oldGrassColor !== '#ffffff' && oldGrassColor !== undefined && oldGrassColor !== null) {
+            resetGrassCount++;
+          }
+          
+          // Aggressively reset panelWashColor - delete first, then set to white
+          const oldPanelColor = tracker.panelWashColor;
+          delete tracker.panelWashColor; // Remove property completely
+          tracker.panelWashColor = '#ffffff'; // Set to white
+          if (oldPanelColor && oldPanelColor !== '#ffffff' && oldPanelColor !== undefined && oldPanelColor !== null) {
+            resetPanelCount++;
+          }
         }
       });
+      
+      // Verify reset worked for BOTH color properties
+      const verifyGrassReset = structure.filter(t => 
+        t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id) && 
+        (t.grassCuttingColor === '#ffffff' || t.grassCuttingColor === undefined)
+      ).length;
+      
+      const verifyPanelReset = structure.filter(t => 
+        t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id) && 
+        (t.panelWashColor === '#ffffff' || t.panelWashColor === undefined)
+      ).length;
+      
+      console.log(`[PLANT] Reset cycle for ${task_type}:`);
+      console.log(`[PLANT]   - Total trackers: ${totalTrackers}`);
+      console.log(`[PLANT]   - Grass cutting colors reset: ${resetGrassCount}`);
+      console.log(`[PLANT]   - Panel wash colors reset: ${resetPanelCount}`);
+      console.log(`[PLANT]   - Verified grass cutting white: ${verifyGrassReset}/${totalTrackers}`);
+      console.log(`[PLANT]   - Verified panel wash white: ${verifyPanelReset}/${totalTrackers}`);
+      
+      if (verifyGrassReset !== totalTrackers || verifyPanelReset !== totalTrackers) {
+        console.warn(`[PLANT] ⚠️ Warning: Not all trackers were reset correctly!`);
+        console.warn(`[PLANT]   Expected ${totalTrackers} for both colors, got grass: ${verifyGrassReset}, panel: ${verifyPanelReset}`);
+      }
+
+      // Final verification: Ensure NO tracker has non-white colors (safety check)
+      // This is CRITICAL - any non-white colors will make trackers appear "hardcoded"
+      const nonWhiteTrackers = structure.filter(t => 
+        t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id) && 
+        ((t.grassCuttingColor && t.grassCuttingColor !== '#ffffff' && t.grassCuttingColor !== undefined && t.grassCuttingColor !== null) ||
+         (t.panelWashColor && t.panelWashColor !== '#ffffff' && t.panelWashColor !== undefined && t.panelWashColor !== null))
+      );
+      
+      if (nonWhiteTrackers.length > 0) {
+        console.error(`[PLANT] ❌ CRITICAL: Found ${nonWhiteTrackers.length} trackers with non-white colors after reset!`);
+        console.error(`[PLANT]   Trackers: ${nonWhiteTrackers.map(t => `${t.id}(grass:${t.grassCuttingColor || 'undefined'},panel:${t.panelWashColor || 'undefined'})`).join(', ')}`);
+        // Force reset these trackers - this ensures ALL colors are white
+        nonWhiteTrackers.forEach(tracker => {
+          // Explicitly set to white, removing any existing color values
+          delete tracker.grassCuttingColor;
+          delete tracker.panelWashColor;
+          tracker.grassCuttingColor = '#ffffff';
+          tracker.panelWashColor = '#ffffff';
+        });
+        console.log(`[PLANT] ✅ Force-reset ${nonWhiteTrackers.length} trackers to white (removed existing colors)`);
+        
+        // Re-verify after force reset
+        const stillNonWhite = structure.filter(t => 
+          t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id) && 
+          ((t.grassCuttingColor && t.grassCuttingColor !== '#ffffff') ||
+           (t.panelWashColor && t.panelWashColor !== '#ffffff'))
+        );
+        if (stillNonWhite.length > 0) {
+          console.error(`[PLANT] ❌❌ CRITICAL ERROR: ${stillNonWhite.length} trackers STILL have non-white colors after force reset!`);
+          console.error(`[PLANT]   This indicates a deeper issue. Trackers: ${stillNonWhite.map(t => t.id).join(', ')}`);
+        } else {
+          console.log(`[PLANT] ✅ Verification passed: All trackers are now white after force reset`);
+        }
+      } else {
+        console.log(`[PLANT] ✅ All trackers verified as white - no force reset needed`);
+      }
 
       // Save updated structure
-      const currentVersionResult = await pool.query(`
-        SELECT version FROM plant_map_structure ORDER BY version DESC LIMIT 1
-      `);
-      const newVersion = currentVersionResult.rows.length > 0 
-        ? currentVersionResult.rows[0].version + 1 
-        : 1;
+      // Use currentVersion from file/database + 1
+      const newVersion = currentVersion + 1;
+      console.log(`[PLANT] Saving structure with version ${newVersion} (previous: ${currentVersion})`);
 
+      // Save to database
       await pool.query(`
-        INSERT INTO plant_map_structure (structure_data, version)
-        VALUES ($1, $2)
-      `, [JSON.stringify(structure), newVersion]);
+        INSERT INTO plant_map_structure (structure_data, version, organization_id)
+        VALUES ($1, $2, $3)
+      `, [JSON.stringify(structure), newVersion, organizationId]);
+      console.log(`[PLANT] ✅ Saved structure to database (version ${newVersion}, organizationId: ${organizationId || 'NULL'})`);
+      
+      // CRITICAL: Save to company-scoped folder (frontend loads from file)
+      // saveMapStructureToFile() now correctly handles system owners by using organizationSlug
+      const fileSaveResult = await saveMapStructureToFile(req, structure, newVersion, organizationId);
 
-      console.log(`[PLANT] Cycle reset: ${task_type} cycle ${currentCycle.cycle_number} -> ${newCycleNumber} by user ${userId}`);
+      if (!fileSaveResult.success && !fileSaveResult.skipped) {
+        // File save actually failed (not just skipped due to no organization context)
+        console.error('[PLANT] ❌ File save failed:', fileSaveResult.error);
+        return res.status(500).json({
+          error: 'Failed to save map structure to file',
+          details: fileSaveResult.error
+        });
+      }
+
+      if (fileSaveResult.skipped) {
+        // File save was skipped - this should only happen if system owner has no company selected
+        console.warn('[PLANT] ⚠️ File save skipped (no organization context - system owner without selected company)');
+      } else {
+        console.log(`[PLANT] ✅ Successfully saved map structure to file (version ${newVersion}, ${structure.length} trackers)`);
+        
+        // Verify file was saved correctly by reading it back
+        if (organizationSlug) {
+          try {
+            const plantDir = getCompanySubDir(organizationSlug, 'plant');
+            const mapFilePath = path.join(plantDir, 'map-structure.json');
+            if (fs.existsSync(mapFilePath)) {
+              const savedContent = fs.readFileSync(mapFilePath, 'utf8');
+              const savedData = JSON.parse(savedContent);
+              
+              // Verify all trackers have white colors
+              const savedNonWhite = savedData.structure?.filter(t => 
+                t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id) && 
+                ((t.grassCuttingColor && t.grassCuttingColor !== '#ffffff') ||
+                 (t.panelWashColor && t.panelWashColor !== '#ffffff'))
+              ) || [];
+              
+              if (savedNonWhite.length > 0) {
+                console.error(`[PLANT] ❌ CRITICAL: File contains ${savedNonWhite.length} trackers with non-white colors!`);
+                console.error(`[PLANT]   This indicates colors are persisted in the file. Trackers: ${savedNonWhite.map(t => t.id).join(', ')}`);
+              } else {
+                console.log(`[PLANT] ✅ File verification passed: All trackers have white colors`);
+              }
+            }
+          } catch (verifyError) {
+            console.warn(`[PLANT] ⚠️ Could not verify saved file:`, verifyError.message);
+          }
+        }
+      }
+
+      if (previousCycleNumber !== null) {
+        console.log(`[PLANT] Cycle reset: ${task_type} cycle ${previousCycleNumber} -> ${newCycleNumber} by user ${userId}`);
+      } else {
+        console.log(`[PLANT] Cycle reset: ${task_type} starting fresh with cycle ${newCycleNumber} by user ${userId}`);
+      }
 
       res.json({
         success: true,
         new_cycle_number: newCycle.cycle_number,
-        previous_cycle_number: currentCycle.cycle_number,
+        previous_cycle_number: previousCycleNumber,
         started_at: newCycle.started_at,
         year: newCycle.year,
         month: newCycle.month

@@ -36,7 +36,13 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
   logger.info('Created uploads directory');
 }
-// Create profiles subdirectory
+// Create companies directory for organization-scoped storage
+const companiesDir = path.join(__dirname, 'uploads', 'companies');
+if (!fs.existsSync(companiesDir)) {
+  fs.mkdirSync(companiesDir, { recursive: true });
+  logger.info('Created uploads/companies directory');
+}
+// Create profiles subdirectory (legacy, for backward compatibility)
 const profilesDir = path.join(__dirname, 'uploads', 'profiles');
 if (!fs.existsSync(profilesDir)) {
   fs.mkdirSync(profilesDir, { recursive: true });
@@ -50,66 +56,29 @@ if (!fs.existsSync(profilesDir)) {
 
 // Removed debug logging - images confirmed working in Chrome
 
-// Serve profile images from /uploads/profiles/
-app.get('/uploads/profiles/:filename', (req, res) => {
-  const filename = req.params.filename;
-  const filePath = path.join(__dirname, 'uploads', 'profiles', filename);
+// Serve company-scoped files: /uploads/companies/{slug}/{file_type}/{filename}
+app.get('/uploads/companies/:slug/:fileType/:filename', (req, res) => {
+  const { slug, fileType, filename } = req.params;
+  
+              // Validate file type
+              const validTypes = [
+                'templates', 'images', 'cm_letters', 'inventory', 
+                'profiles', 'reports', 'exports', 'logs', 'documents', 'logos', 'plant'
+              ];
+  if (!validTypes.includes(fileType)) {
+    logger.warn('[UPLOADS] Invalid file type', { fileType, ip: req.ip });
+    return res.status(400).send('Invalid file type');
+  }
+  
+  // Sanitize slug to prevent directory traversal
+  const sanitizedSlug = slug.replace(/[^a-z0-9_-]/g, '').toLowerCase();
+  const filePath = path.join(__dirname, 'uploads', 'companies', sanitizedSlug, fileType, filename);
   
   // Security check: prevent directory traversal
   const resolvedPath = path.resolve(filePath);
-  const profilesDir = path.resolve(__dirname, 'uploads', 'profiles');
-  if (!resolvedPath.startsWith(profilesDir)) {
-    logger.warn('[UPLOADS] Directory traversal blocked', { filename, ip: req.ip });
-    return res.status(403).send('Forbidden');
-  }
-  
-  // Check if file exists
-  if (!fs.existsSync(filePath)) {
-    logger.warn('[UPLOADS] Profile image not found', { filePath, ip: req.ip });
-    return res.status(404).send('Not found');
-  }
-  
-  // Determine content type
-  const ext = path.extname(filename).toLowerCase();
-  const contentTypes = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp'
-  };
-  const contentType = contentTypes[ext] || 'image/jpeg';
-  
-  // Read and serve file with proper headers
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      logger.error('[UPLOADS] Error reading profile image', { filePath, error: err.message });
-      return res.status(500).send('Error reading file');
-    }
-    
-    // Set headers for profile images
-    res.writeHead(200, {
-      'Content-Type': contentType,
-      'Content-Length': data.length,
-      'Access-Control-Allow-Origin': '*',
-      'Cross-Origin-Resource-Policy': 'cross-origin',
-      'Cache-Control': 'public, max-age=31536000' // Cache for 1 year
-    });
-    res.end(data, 'binary');
-  });
-});
-
-app.get('/uploads/:filename', (req, res) => {
-  const filename = req.params.filename;
-  const filePath = path.join(__dirname, 'uploads', filename);
-  
-  logger.debug(`[UPLOADS] Request for: ${filename}`);
-  
-  // Security check: prevent directory traversal
-  const resolvedPath = path.resolve(filePath);
-  const uploadsDir = path.resolve(__dirname, 'uploads');
-  if (!resolvedPath.startsWith(uploadsDir)) {
-    logger.warn('[UPLOADS] Directory traversal blocked', { filename, ip: req.ip });
+  const companyDir = path.resolve(__dirname, 'uploads', 'companies', sanitizedSlug);
+  if (!resolvedPath.startsWith(companyDir)) {
+    logger.warn('[UPLOADS] Directory traversal blocked', { filename, slug, ip: req.ip });
     return res.status(403).send('Forbidden');
   }
   
@@ -126,18 +95,21 @@ app.get('/uploads/:filename', (req, res) => {
     '.jpeg': 'image/jpeg',
     '.png': 'image/png',
     '.gif': 'image/gif',
-    '.webp': 'image/webp'
+    '.webp': 'image/webp',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xls': 'application/vnd.ms-excel',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.pdf': 'application/pdf'
   };
   const contentType = contentTypes[ext] || 'application/octet-stream';
   
-  // Read and send file with explicit headers
+  // Read and serve file with proper headers
   fs.readFile(filePath, (err, data) => {
     if (err) {
-      logger.error('[UPLOADS] Read error', { filePath, error: err.message });
-      return res.status(500).send('Error');
+      logger.error('[UPLOADS] Error reading file', { filePath, error: err.message });
+      return res.status(500).send('Error reading file');
     }
     
-    // Use writeHead to set ALL headers atomically
     res.writeHead(200, {
       'Content-Type': contentType,
       'Content-Length': data.length,
@@ -145,11 +117,12 @@ app.get('/uploads/:filename', (req, res) => {
       'Cross-Origin-Resource-Policy': 'cross-origin',
       'Cache-Control': 'public, max-age=31536000'
     });
-    
-    logger.debug(`[UPLOADS] Sending file`, { filename, size: data.length });
     res.end(data, 'binary');
   });
 });
+
+// Legacy routes removed - all files now use company-scoped structure: /uploads/companies/{slug}/{fileType}/{filename}
+// If you need backward compatibility, uncomment these routes temporarily during migration
 
 // Trust proxy for accurate IP addresses (important for rate limiting)
 // Dev Tunnels acts as a reverse proxy, so we need to trust it
@@ -469,11 +442,12 @@ const earlyCompletionRequestsRoutes = require('./routes/earlyCompletionRequests'
 const notificationsRoutes = require('./routes/notifications');
 const platformRoutes = require('./routes/platform');
 const calendarRoutes = require('./routes/calendar');
-const licenseRoutes = require('./routes/license');
+// License routes removed - no longer needed
 const syncRoutes = require('./routes/sync');
 const overtimeRequestsRoutes = require('./routes/overtimeRequests');
 const plantRoutes = require('./routes/plant');
 const feedbackRoutes = require('./routes/feedback');
+const organizationsRoutes = require('./routes/organizations');
 
 // Swagger (OpenAPI) docs
 const swaggerUi = require('swagger-ui-express');
@@ -508,44 +482,51 @@ if (process.env.DISABLE_RATE_LIMITING !== 'true' && isProduction()) {
 }
 app.use('/api/auth', authRoutes(pool));
 
-// License validation middleware (applied to all protected routes except license endpoints)
-const { requireValidLicense } = require('./middleware/license');
-const licenseCheck = requireValidLicense(pool);
+// Tenant context middleware (sets organization_id for RLS)
+const { setTenantContext } = require('./middleware/tenantContext');
+const tenantContextMiddleware = setTenantContext(pool);
 
-// Protected routes (require valid license)
-app.use('/api/users', licenseCheck, usersRoutes(pool));
-app.use('/api/assets', licenseCheck, assetsRoutes(pool));
-app.use('/api/checklist-templates', licenseCheck, checklistTemplatesRoutes(pool));
-app.use('/api/tasks', licenseCheck, tasksRoutes(pool));
-app.use('/api/checklist-responses', licenseCheck, checklistResponsesRoutes(pool));
-app.use('/api/cm-letters', licenseCheck, cmLettersRoutes(pool));
-app.use('/api/upload', licenseCheck, uploadRoutes(pool));
-app.use('/api/api-tokens', licenseCheck, apiTokensRoutes(pool));
-app.use('/api/webhooks', licenseCheck, webhooksRoutes(pool));
-app.use('/api/inventory', licenseCheck, inventoryRoutes(pool));
-app.use('/api/early-completion-requests', licenseCheck, earlyCompletionRequestsRoutes(pool));
-app.use('/api/notifications', licenseCheck, notificationsRoutes(pool));
-app.use('/api/platform', licenseCheck, platformRoutes(pool));
-app.use('/api/calendar', licenseCheck, calendarRoutes(pool));
-app.use('/api/license', licenseRoutes(pool));
+// License validation middleware removed - no longer needed
+// const { requireValidLicense } = require('./middleware/license');
+// const licenseCheck = requireValidLicense(pool);
+
+// Protected routes (require valid license and tenant context)
+app.use('/api/users', tenantContextMiddleware, usersRoutes(pool));
+app.use('/api/assets', tenantContextMiddleware, assetsRoutes(pool));
+app.use('/api/checklist-templates', tenantContextMiddleware, checklistTemplatesRoutes(pool));
+app.use('/api/tasks', tenantContextMiddleware, tasksRoutes(pool));
+app.use('/api/checklist-responses', checklistResponsesRoutes(pool));
+app.use('/api/cm-letters', tenantContextMiddleware, cmLettersRoutes(pool));
+app.use('/api/upload', uploadRoutes(pool));
+app.use('/api/api-tokens', apiTokensRoutes(pool));
+app.use('/api/webhooks', webhooksRoutes(pool));
+app.use('/api/inventory', tenantContextMiddleware, inventoryRoutes(pool));
+app.use('/api/early-completion-requests', earlyCompletionRequestsRoutes(pool));
+app.use('/api/notifications', notificationsRoutes(pool));
+app.use('/api/platform', tenantContextMiddleware, platformRoutes(pool));
+app.use('/api/calendar', tenantContextMiddleware, calendarRoutes(pool));
+// License route removed - no longer needed
+// app.use('/api/license', licenseRoutes(pool));
 app.use('/api', syncRoutes(pool));
-app.use('/api/overtime-requests', licenseCheck, overtimeRequestsRoutes(pool));
-app.use('/api/plant', licenseCheck, plantRoutes(pool));
-app.use('/api/feedback', licenseCheck, feedbackRoutes(pool));
+app.use('/api/overtime-requests', overtimeRequestsRoutes(pool));
+app.use('/api/plant', tenantContextMiddleware, plantRoutes(pool));
+app.use('/api/feedback', feedbackRoutes(pool));
+app.use('/api/organizations', tenantContextMiddleware, organizationsRoutes(pool));
 
 // Versioned API (v1) - mirrors /api for integration stability
 app.use('/api/v1/auth', authRoutes(pool));
-app.use('/api/v1/users', licenseCheck, usersRoutes(pool));
-app.use('/api/v1/assets', licenseCheck, assetsRoutes(pool));
-app.use('/api/v1/checklist-templates', licenseCheck, checklistTemplatesRoutes(pool));
-app.use('/api/v1/tasks', licenseCheck, tasksRoutes(pool));
-app.use('/api/v1/checklist-responses', licenseCheck, checklistResponsesRoutes(pool));
-app.use('/api/v1/cm-letters', licenseCheck, cmLettersRoutes(pool));
-app.use('/api/v1/upload', licenseCheck, uploadRoutes(pool));
-app.use('/api/v1/api-tokens', licenseCheck, apiTokensRoutes(pool));
-app.use('/api/v1/webhooks', licenseCheck, webhooksRoutes(pool));
-app.use('/api/v1/inventory', licenseCheck, inventoryRoutes(pool));
-app.use('/api/v1/license', licenseRoutes(pool));
+app.use('/api/v1/users', tenantContextMiddleware, usersRoutes(pool));
+app.use('/api/v1/assets', tenantContextMiddleware, assetsRoutes(pool));
+app.use('/api/v1/checklist-templates', tenantContextMiddleware, checklistTemplatesRoutes(pool));
+app.use('/api/v1/tasks', tenantContextMiddleware, tasksRoutes(pool));
+app.use('/api/v1/checklist-responses', tenantContextMiddleware, checklistResponsesRoutes(pool));
+app.use('/api/v1/cm-letters', tenantContextMiddleware, cmLettersRoutes(pool));
+app.use('/api/v1/upload', tenantContextMiddleware, uploadRoutes(pool));
+app.use('/api/v1/api-tokens', tenantContextMiddleware, apiTokensRoutes(pool));
+app.use('/api/v1/webhooks', tenantContextMiddleware, webhooksRoutes(pool));
+app.use('/api/v1/inventory', tenantContextMiddleware, inventoryRoutes(pool));
+// License route removed - no longer needed
+// app.use('/api/v1/license', licenseRoutes(pool));
 
 // Create reports directory if it doesn't exist - ALL REPORTS SAVED HERE
 const reportsDir = path.join(__dirname, 'reports');

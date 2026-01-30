@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getInventoryItems, adjustInventory, downloadInventoryExcel, getSparesUsage, createInventoryItem, updateInventoryItem } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { hasOrganizationContext, isSystemOwnerWithoutCompany } from '../utils/organizationContext';
 
 function Inventory() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user, loading: authLoading } = useAuth();
   const [items, setItems] = useState([]);
   const [q, setQ] = useState('');
   const [lowOnly, setLowOnly] = useState(false);
@@ -41,6 +42,21 @@ function Inventory() {
     try {
       setLoading(true);
       setError('');
+      
+      // Wait for AuthContext to finish loading before checking organization context
+      if (authLoading) {
+        setLoading(false);
+        return;
+      }
+      
+      // Check if user has organization context
+      if (!hasOrganizationContext(user)) {
+        // System owner without company: show empty inventory
+        setItems([]);
+        setLoading(false);
+        return;
+      }
+      
       const query = searchQuery?.trim() || undefined;
       const low_stock = lowStockFilter ? 'true' : undefined;
       const resp = await getInventoryItems({ q: query, low_stock });
@@ -50,12 +66,15 @@ function Inventory() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user, authLoading]);
 
   // Initial load
   useEffect(() => {
-    load('', false);
-  }, [load]);
+    // Wait for AuthContext to finish loading before loading data
+    if (!authLoading) {
+      load('', false);
+    }
+  }, [load, authLoading]);
 
   // Debounced auto-search (lets you type normally without firing on every keystroke)
   useEffect(() => {

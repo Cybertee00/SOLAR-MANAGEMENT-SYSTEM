@@ -1,5 +1,14 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const { generateFaultLogExcel } = require('../utils/faultLogGenerator');
+const { 
+  getOrganizationSlugFromRequest, 
+  getStoragePath, 
+  getFileUrl,
+  ensureCompanyDirs,
+  getOrganizationSlugById
+} = require('../utils/organizationStorage');
 
 module.exports = (pool) => {
   const router = express.Router();
@@ -7,6 +16,18 @@ module.exports = (pool) => {
   // Get all CM letters
   router.get('/', async (req, res) => {
     try {
+      // System owners without a selected company should see no CM letters
+      const { isSystemOwnerWithoutCompany, getOrganizationIdFromRequest } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.json([]);
+      }
+      
+      // Get organization ID from request context (for explicit filtering)
+      const organizationId = getOrganizationIdFromRequest(req);
+      if (!organizationId) {
+        return res.json([]);
+      }
+      
       const { status, task_id, startDate, endDate } = req.query;
       let query = `
         SELECT cm.*, 
@@ -17,11 +38,11 @@ module.exports = (pool) => {
         LEFT JOIN tasks t ON cm.task_id = t.id
         LEFT JOIN assets a ON cm.asset_id = a.id
         LEFT JOIN tasks pt ON cm.parent_pm_task_id = pt.id
-        WHERE 1=1
+        WHERE cm.organization_id = $1
       `;
       // Note: cm.* includes images and action_taken fields from fault log
-      const params = [];
-      let paramCount = 1;
+      const params = [organizationId];
+      let paramCount = 2;
 
       if (status) {
         query += ` AND cm.status = $${paramCount++}`;
@@ -42,7 +63,10 @@ module.exports = (pool) => {
 
       query += ' ORDER BY cm.generated_at DESC';
 
-      const result = await pool.query(query, params);
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      const result = await db.query(query, params);
       res.json(result.rows);
     } catch (error) {
       console.error('Error fetching CM letters:', error);
@@ -105,6 +129,15 @@ module.exports = (pool) => {
         });
       }
 
+      // Get organization slug for file storage
+      const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+      if (!organizationSlug) {
+        return res.status(400).json({ error: 'Organization context is required' });
+      }
+
+      // Ensure company directories exist
+      await ensureCompanyDirs(organizationSlug);
+
       // Generate Excel
       const buffer = await generateFaultLogExcel(pool, {
         period: period === 'custom' ? 'all' : period, // Use 'all' for custom to let date filtering handle it
@@ -123,6 +156,11 @@ module.exports = (pool) => {
         const dateStr = new Date().toISOString().split('T')[0];
         filename = `Fault_Log_${periodLabel}_${dateStr}.xlsx`;
       }
+
+      // Save report to company reports folder
+      const reportsDir = getStoragePath(organizationSlug, 'reports');
+      const reportPath = path.join(reportsDir, filename);
+      fs.writeFileSync(reportPath, buffer);
 
       // Set headers
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -145,7 +183,17 @@ module.exports = (pool) => {
   // Get CM letter by ID
   router.get('/:id', async (req, res) => {
     try {
-      const result = await pool.query(`
+      // System owners without a selected company should see no CM letters
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.status(404).json({ error: 'CM letter not found' });
+      }
+      
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      const result = await db.query(`
         SELECT cm.*, 
                t.task_code,
                a.asset_code, a.asset_name,
@@ -170,7 +218,7 @@ module.exports = (pool) => {
         
         // Try to get images from the parent PM task
         if (cmLetter.parent_pm_task_id) {
-          const imagesResult = await pool.query(
+          const imagesResult = await db.query(
             `SELECT image_path, image_filename, item_id, section_id, comment 
              FROM failed_item_images 
              WHERE task_id = $1 
@@ -180,18 +228,29 @@ module.exports = (pool) => {
           
           if (imagesResult.rows.length > 0) {
             images = imagesResult.rows.map(img => {
-              // Extract actual filename from image_path if it contains the full path
-              // image_path format: "/uploads/timestamp-uuid-filename.ext"
-              // We need just the filename part: "timestamp-uuid-filename.ext"
+              // Use the full company-scoped path from image_path
+              // image_path format: "/uploads/companies/{slug}/images/timestamp-uuid-filename.ext"
+              // Keep the full path for proper company-scoped file serving
               let imagePath = img.image_path;
-              let filename = img.image_filename;
+              let filename = img.image_filename || (imagePath ? imagePath.split('/').pop() : null);
               
-              // If image_path contains a path, extract just the filename
+              // If image_path is a company-scoped path, use it directly
+              if (imagePath && imagePath.startsWith('/uploads/companies/')) {
+                // Full company-scoped path - use as-is
+                return {
+                  path: imagePath,
+                  image_path: imagePath,
+                  filename: filename,
+                  item_id: img.item_id,
+                  section_id: img.section_id,
+                  comment: img.comment || ''
+                };
+              }
+              
+              // Legacy path format - extract filename for backward compatibility
               if (imagePath && imagePath.includes('/')) {
-                const extractedFilename = imagePath.split('/').pop();
-                // Use the extracted filename (this is the actual file on disk)
-                filename = extractedFilename;
-                imagePath = extractedFilename; // Store just the filename, not the full path
+                filename = imagePath.split('/').pop();
+                imagePath = filename; // Store just filename for legacy routes
               }
               
               // If we don't have a filename yet, try to get it from image_filename
@@ -199,17 +258,10 @@ module.exports = (pool) => {
                 filename = img.image_filename;
               }
               
-              console.log('CM Letter image mapping:', {
-                original_image_path: img.image_path,
-                original_image_filename: img.image_filename,
-                extracted_filename: filename,
-                final_imagePath: imagePath
-              });
-              
               return {
-                path: imagePath || filename, // Use extracted filename
-                image_path: imagePath || filename, // Also include as image_path for compatibility
-                filename: filename, // The actual filename to use
+                path: imagePath || filename,
+                image_path: imagePath || filename,
+                filename: filename,
                 item_id: img.item_id,
                 section_id: img.section_id,
                 comment: img.comment || ''
@@ -217,7 +269,7 @@ module.exports = (pool) => {
             });
             
             // Update the CM letter with the images (backfill)
-            await pool.query(
+            await db.query(
               'UPDATE cm_letters SET images = $1::jsonb WHERE id = $2',
               [JSON.stringify(images), req.params.id]
             );

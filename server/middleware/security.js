@@ -99,6 +99,16 @@ function validateUUIDParams(req, res, next) {
     return next();
   }
   
+  // Skip if this is a roles route (/api/users/roles)
+  // When Express matches /api/users/:id to /api/users/roles,
+  // it sets req.params.id = 'roles', so we check for that
+  if (path.includes('/roles') || 
+      originalUrl.includes('/roles') ||
+      originalUrl.includes('/api/users/roles') ||
+      idParam === 'roles') {
+    return next();
+  }
+  
   // Skip if this is a fault-log download route
   // Check multiple ways to catch this route before UUID validation
   // The route is /api/cm-letters/fault-log/download

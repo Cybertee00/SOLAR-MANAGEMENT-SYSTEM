@@ -213,81 +213,6 @@ module.exports = (pool) => {
           [maintenance_team, inspected_by, approved_by, task_id]
         );
       }
-
-      // Link images to CM letters if task failed
-      if (overallStatus === 'fail') {
-        // Get CM letter for this task (check if CM task was generated from this PM task)
-        const cmLetterResult = await pool.query(
-          `SELECT id FROM cm_letters 
-           WHERE parent_pm_task_id = $1 
-           OR task_id IN (SELECT id FROM tasks WHERE parent_task_id = $1)
-           ORDER BY created_at DESC LIMIT 1`,
-          [task_id]
-        );
-        
-        if (cmLetterResult.rows.length > 0) {
-          // Fetch all images from failed_item_images table for this task
-          const failedImagesResult = await pool.query(
-            `SELECT image_path, image_filename, item_id, section_id, comment 
-             FROM failed_item_images 
-             WHERE task_id = $1 
-             ORDER BY uploaded_at ASC`,
-            [task_id]
-          );
-          
-          const failedImages = failedImagesResult.rows;
-          
-          // Also include images from the submission if any
-          let allImages = [];
-          
-          // Add images from failed_item_images table (most reliable)
-          if (failedImages.length > 0) {
-            allImages = failedImages.map(img => ({
-              path: img.image_path,
-              filename: img.image_filename,
-              item_id: img.item_id,
-              section_id: img.section_id,
-              comment: img.comment || ''
-            }));
-          }
-          
-          // Also add images from submission if they're not already in the list
-          if (images && images.length > 0) {
-            const existingPaths = new Set(allImages.map(img => img.path));
-            images.forEach(img => {
-              const imgPath = img.image_path || img.path;
-              if (imgPath && !existingPaths.has(imgPath)) {
-                allImages.push({
-                  path: imgPath,
-                  filename: img.image_filename || img.filename || imgPath.split('/').pop(),
-                  item_id: img.itemId || img.item_id || img.sectionId?.split('_')[1],
-                  section_id: img.sectionId || img.section_id || img.sectionId?.split('_')[0],
-                  comment: img.comment || ''
-                });
-              }
-            });
-          }
-          
-          if (allImages.length > 0) {
-            await pool.query(
-              'UPDATE cm_letters SET images = $1::jsonb, failure_comments = $2::jsonb WHERE id = $3',
-              [
-                JSON.stringify(allImages),
-                JSON.stringify(allImages.map(img => ({ 
-                  item_id: img.item_id, 
-                  comment: img.comment || '' 
-                }))),
-                cmLetterResult.rows[0].id
-              ]
-            );
-            console.log(`Linked ${allImages.length} images to CM letter ${cmLetterResult.rows[0].id} for task ${task_id}`);
-          } else {
-            console.log(`No images found to link to CM letter for task ${task_id}`);
-          }
-        } else {
-          console.log(`No CM letter found for task ${task_id}`);
-        }
-      }
       // Update task status and overall status
       // For Unplanned CM tasks, include time fields if provided
       // Note: 'task' variable is already declared above at line 123
@@ -436,34 +361,98 @@ module.exports = (pool) => {
               const pmPerformedBy = submitted_by || req.session?.userId || null;
               
               // Create CM task (use PCM as task type, not CM)
+              // Inherit organization_id from parent PM task
               const cmTaskResult = await pool.query(
                 `INSERT INTO tasks (
                   task_code, checklist_template_id, asset_id, task_type, 
-                  status, parent_task_id, scheduled_date, pm_performed_by
-                ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE, $5) RETURNING *`,
-                [taskCode, cmTemplateId, updatedTask.asset_id, task_id, pmPerformedBy]
+                  status, parent_task_id, scheduled_date, pm_performed_by, organization_id
+                ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE, $5, $6) RETURNING *`,
+                [taskCode, cmTemplateId, updatedTask.asset_id, task_id, pmPerformedBy, updatedTask.organization_id]
               );
               
               const cmTask = cmTaskResult.rows[0];
               
               // Generate CM letter
+              // Inherit organization_id from task
               const letterNumber = `CM-LTR-${Date.now()}`;
-              await pool.query(
+              const cmLetterResult = await pool.query(
                 `INSERT INTO cm_letters (
                   task_id, parent_pm_task_id, letter_number, asset_id,
-                  issue_description, priority, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, 'open')`,
+                  issue_description, priority, status, organization_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, 'open', $7) RETURNING id`,
                 [
                   cmTask.id,
                   task_id,
                   letterNumber,
                   updatedTask.asset_id,
                   `Corrective maintenance required due to failed PM task: ${updatedTask.task_code}`,
-                  (cmRules.default_priority || 'medium')
+                  (cmRules.default_priority || 'medium'),
+                  updatedTask.organization_id
                 ]
               );
               
-              console.log(`CM task ${cmTask.task_code} generated from failed PM task ${updatedTask.task_code}`);
+              const cmLetterId = cmLetterResult.rows[0].id;
+              console.log(`CM task ${cmTask.task_code} and CM letter ${letterNumber} generated from failed PM task ${updatedTask.task_code}`);
+              
+              // Link images to CM letter AFTER it's created
+              // Fetch all images from failed_item_images table for this task
+              const failedImagesResult = await pool.query(
+                `SELECT image_path, image_filename, item_id, section_id, comment 
+                 FROM failed_item_images 
+                 WHERE task_id = $1 
+                 ORDER BY uploaded_at ASC`,
+                [task_id]
+              );
+              
+              const failedImages = failedImagesResult.rows;
+              
+              // Also include images from the submission if any
+              let allImages = [];
+              
+              // Add images from failed_item_images table (most reliable)
+              if (failedImages.length > 0) {
+                allImages = failedImages.map(img => ({
+                  path: img.image_path,
+                  filename: img.image_filename,
+                  item_id: img.item_id,
+                  section_id: img.section_id,
+                  comment: img.comment || ''
+                }));
+              }
+              
+              // Also add images from submission if they're not already in the list
+              if (images && images.length > 0) {
+                const existingPaths = new Set(allImages.map(img => img.path));
+                images.forEach(img => {
+                  const imgPath = img.image_path || img.path;
+                  if (imgPath && !existingPaths.has(imgPath)) {
+                    allImages.push({
+                      path: imgPath,
+                      filename: img.image_filename || img.filename || imgPath.split('/').pop(),
+                      item_id: img.itemId || img.item_id || img.sectionId?.split('_')[1],
+                      section_id: img.sectionId || img.section_id || img.sectionId?.split('_')[0],
+                      comment: img.comment || ''
+                    });
+                  }
+                });
+              }
+              
+              if (allImages.length > 0) {
+                await pool.query(
+                  'UPDATE cm_letters SET images = $1::jsonb, failure_comments = $2::jsonb WHERE id = $3',
+                  [
+                    JSON.stringify(allImages),
+                    JSON.stringify(allImages.map(img => ({ 
+                      item_id: img.item_id, 
+                      comment: img.comment || '' 
+                    }))),
+                    cmLetterId
+                  ]
+                );
+                console.log(`Linked ${allImages.length} images to CM letter ${cmLetterId} for task ${task_id}`);
+              } else {
+                console.log(`No images found to link to CM letter for task ${task_id}`);
+              }
             }
           }
         } catch (cmError) {

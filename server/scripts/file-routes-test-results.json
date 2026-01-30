@@ -1,0 +1,12 @@
+{
+  "oldPaths": [],
+  "newPaths": [],
+  "issues": [],
+  "recommendations": [
+    "Legacy routes in server/index.js should be removed after migration:",
+    "  - /uploads/profiles/:filename (line 125)",
+    "  - /uploads/:filename (line 173)",
+    "Legacy route in server/routes/upload.js should be removed:",
+    "  - GET /:filename (line 178)"
+  ]
+}

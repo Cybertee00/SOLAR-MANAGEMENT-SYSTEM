@@ -738,71 +738,32 @@ export const downloadYearCalendar = async (year = null) => {
   window.URL.revokeObjectURL(url);
 };
 
-// License API functions
-export const getLicenseStatus = async () => {
+// Organization API functions
+export const getCurrentOrganizationBranding = () => api.get('/organizations/current/branding');
+export const getOrganizationBranding = (id) => api.get(`/organizations/${id}/branding`);
+export const updateOrganizationBranding = (id, data) => api.put(`/organizations/${id}/branding`, data);
+export const uploadOrganizationLogo = async (id, file) => {
+  const formData = new FormData();
+  formData.append('logo', file);
   const API_BASE_URL = getApiBaseUrl();
-  try {
-    const response = await axios.get(`${API_BASE_URL}/license/status`, {
-      withCredentials: true,
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching license status:', error);
-    throw error;
+  const response = await fetch(`${API_BASE_URL}/organizations/${id}/logo`, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to upload logo');
   }
+  return response.json();
 };
 
-export const getLicenseInfo = async () => {
-  const API_BASE_URL = getApiBaseUrl();
-  try {
-    const response = await axios.get(`${API_BASE_URL}/license/info`, {
-      withCredentials: true,
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching license info:', error);
-    throw error;
-  }
-};
-
-export const activateLicense = async (licenseData) => {
-  const API_BASE_URL = getApiBaseUrl();
-  try {
-    const response = await axios.post(`${API_BASE_URL}/license/activate`, licenseData, {
-      withCredentials: true,
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error activating license:', error);
-    throw error;
-  }
-};
-
-export const renewLicense = async (licenseKey) => {
-  const API_BASE_URL = getApiBaseUrl();
-  try {
-    const response = await axios.put(`${API_BASE_URL}/license/renew`, { license_key: licenseKey }, {
-      withCredentials: true,
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error renewing license:', error);
-    throw error;
-  }
-};
-
-export const generateLicenseKey = async (companyName) => {
-  const API_BASE_URL = getApiBaseUrl();
-  try {
-    const response = await axios.post(`${API_BASE_URL}/license/generate`, { company_name: companyName }, {
-      withCredentials: true,
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error generating license key:', error);
-    throw error;
-  }
-};
+// License API functions removed - no longer needed
+// export const getLicenseStatus = async () => { ... }
+// export const getLicenseInfo = async () => { ... }
+// export const activateLicense = async (licenseData) => { ... }
+// export const renewLicense = async (licenseKey) => { ... }
+// export const generateLicenseKey = async (companyName) => { ... }
 
 export const submitFeedback = async (data) => {
   const API_BASE_URL = getApiBaseUrl();

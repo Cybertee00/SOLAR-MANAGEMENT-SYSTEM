@@ -248,6 +248,13 @@ function Notifications() {
           setReviewingRequest(null);
           setRejectionReason('');
           
+          // Dispatch custom event to notify Plant page to reload
+          if (action === 'approve') {
+            window.dispatchEvent(new CustomEvent('trackerStatusApproved', {
+              detail: { requestId, action }
+            }));
+          }
+          
           // Reload notifications to get the updated state
           await loadNotifications();
           await loadUnreadCount();

@@ -36,11 +36,11 @@ module.exports = (pool) => {
       let hasRolesColumn = false;
       
       try {
-        // Try query with roles column first
+        // Try query with roles column first (include organization_id for data isolation)
         userResult = await pool.query(
           `SELECT id, username, email, full_name, 
                   COALESCE(roles, jsonb_build_array(role)) as roles,
-                  role, profile_image, password_hash, is_active 
+                  role, profile_image, password_hash, is_active, organization_id
            FROM users 
            WHERE username = $1 OR email = $1`,
           [username]
@@ -50,14 +50,14 @@ module.exports = (pool) => {
         // If roles column doesn't exist, use fallback query
         if (error.code === '42703' || error.message.includes('roles')) {
           logger.debug('roles column not found, using fallback query');
-          userResult = await pool.query(
-            `SELECT id, username, email, full_name, 
-                    role, profile_image, password_hash, is_active 
-             FROM users 
-             WHERE username = $1 OR email = $1`,
-            [username]
-          );
-          hasRolesColumn = false;
+            userResult = await pool.query(
+              `SELECT id, username, email, full_name, 
+                      role, profile_image, password_hash, is_active, organization_id
+               FROM users 
+               WHERE username = $1 OR email = $1`,
+              [username]
+            );
+            hasRolesColumn = false;
         } else {
           // Re-throw if it's a different error
           throw error;
@@ -309,6 +309,32 @@ module.exports = (pool) => {
           await storeUserSession(user.id, jwtToken, 86400); // 24 hours
         }
 
+        // Load organization info for regular users (not system owners)
+        let organizationInfo = null;
+        const isSystemOwnerUser = userRoles.includes('system_owner') || 
+                                  user.role === 'system_owner' ||
+                                  userRoles.includes('super_admin') ||
+                                  user.role === 'super_admin';
+        
+        if (!isSystemOwnerUser && user.organization_id) {
+          try {
+            const orgResult = await pool.query(
+              `SELECT id, name, slug FROM organizations WHERE id = $1`,
+              [user.organization_id]
+            );
+            if (orgResult.rows.length > 0) {
+              organizationInfo = {
+                id: orgResult.rows[0].id,
+                name: orgResult.rows[0].name,
+                slug: orgResult.rows[0].slug
+              };
+            }
+          } catch (orgError) {
+            logger.warn('Error loading organization info on login', { error: orgError.message });
+            // Continue without organization info - not critical for login
+          }
+        }
+
         // Return user info (without password) with JWT token
         // Make sure we only send response once
         if (!res.headersSent) {
@@ -324,7 +350,10 @@ module.exports = (pool) => {
             role: userRoles[0] || user.role, // Primary role for backward compatibility
             roles: userRoles, // Array of all roles
             permissions: userPermissions, // RBAC permissions
-            password_changed: passwordChanged // Flag to indicate if password needs to be changed
+            password_changed: passwordChanged, // Flag to indicate if password needs to be changed
+            organization_id: user.organization_id || null, // Organization ID for data isolation
+            organization_name: organizationInfo?.name || null, // Organization name for display
+            organization_slug: organizationInfo?.slug || null // Organization slug for file paths
           },
           requires_password_change: !passwordChanged // Flag for frontend to show password change modal
         });
@@ -430,7 +459,7 @@ module.exports = (pool) => {
         userResult = await pool.query(
           `SELECT id, username, email, full_name, role,
                   COALESCE(roles, jsonb_build_array(role)) as roles,
-                  profile_image, is_active, last_login,
+                  profile_image, is_active, last_login, organization_id,
                   COALESCE(password_changed, true) as password_changed
            FROM users 
            WHERE id = $1`,
@@ -439,7 +468,7 @@ module.exports = (pool) => {
       } else {
         userResult = await pool.query(
           `SELECT id, username, email, full_name, role,
-                  profile_image, is_active, last_login,
+                  profile_image, is_active, last_login, organization_id,
                   COALESCE(password_changed, true) as password_changed
            FROM users 
            WHERE id = $1`,
@@ -513,6 +542,33 @@ module.exports = (pool) => {
       req.session.role = userRoles[0] || user.role || 'technician';
       req.session.permissions = userPermissions;
 
+      // Load organization info for regular users (not system owners)
+      // This ensures organization context persists on page refresh
+      let organizationInfo = null;
+      const isSystemOwnerUser = userRoles.includes('system_owner') || 
+                                user.role === 'system_owner' ||
+                                userRoles.includes('super_admin') ||
+                                user.role === 'super_admin';
+      
+      if (!isSystemOwnerUser && user.organization_id) {
+        try {
+          const orgResult = await pool.query(
+            `SELECT id, name, slug FROM organizations WHERE id = $1 AND is_active = true`,
+            [user.organization_id]
+          );
+          if (orgResult.rows.length > 0) {
+            organizationInfo = {
+              id: orgResult.rows[0].id,
+              name: orgResult.rows[0].name,
+              slug: orgResult.rows[0].slug
+            };
+          }
+        } catch (orgError) {
+          logger.warn('Error loading organization info in /me endpoint', { error: orgError.message });
+          // Continue without organization info - not critical
+        }
+      }
+
       if (!res.headersSent) {
         res.json({
           user: {
@@ -525,7 +581,10 @@ module.exports = (pool) => {
             roles: userRoles, // Array of all roles
             permissions: userPermissions, // RBAC permissions
             last_login: user.last_login,
-            password_changed: passwordChanged
+            password_changed: passwordChanged,
+            organization_id: user.organization_id || null, // Always include organization_id
+            organization_name: organizationInfo?.name || null, // Include organization name if available
+            organization_slug: organizationInfo?.slug || null // Include organization slug if available
           }
         });
       }

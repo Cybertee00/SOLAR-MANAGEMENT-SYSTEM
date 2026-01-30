@@ -11,10 +11,11 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { getErrorMessage } from '../utils/errorHandler';
+import { hasOrganizationContext } from '../utils/organizationContext';
 import './ChecklistTemplates.css';
 
 function ChecklistTemplates() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user, loading: authLoading } = useAuth();
   const { hasPermission } = usePermissions();
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,8 +70,20 @@ function ChecklistTemplates() {
   const canDelete = hasPermission('templates:delete');
 
   useEffect(() => {
-    loadTemplates();
-  }, []);
+    // Wait for AuthContext to finish loading before checking organization context
+    if (authLoading) {
+      return; // Don't check until auth is loaded
+    }
+    
+    // Only load templates if user has organization context
+    if (hasOrganizationContext(user)) {
+      loadTemplates();
+    } else {
+      // System owner without company: show empty templates
+      setTemplates([]);
+      setLoading(false);
+    }
+  }, [user, authLoading]);
 
   const loadTemplates = async () => {
     try {

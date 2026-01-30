@@ -39,8 +39,12 @@ module.exports = (pool) => {
                            req.session.roles?.includes('super_admin') ||
                            req.session.role === 'super_admin';
       
+      // Use getDb for RLS (though roles table might not have RLS, it's good practice)
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
       // Check if RBAC tables exist
-      const rbacCheck = await pool.query(`
+      const rbacCheck = await db.query(`
         SELECT table_name 
         FROM information_schema.tables 
         WHERE table_schema = 'public' AND table_name = 'roles'
@@ -70,7 +74,7 @@ module.exports = (pool) => {
             END
         `;
         
-        const result = await pool.query(query);
+        const result = await db.query(query);
         res.json(result.rows);
       } else {
         // Fallback to legacy roles
@@ -83,7 +87,7 @@ module.exports = (pool) => {
       }
     } catch (error) {
       console.error('Error fetching roles:', error);
-      res.status(500).json({ error: 'Failed to fetch roles' });
+      res.status(500).json({ error: 'Failed to fetch roles', details: error.message });
     }
   });
 
@@ -96,8 +100,63 @@ module.exports = (pool) => {
                            req.session.roles?.includes('super_admin') ||
                            req.session.role === 'super_admin';
       
-      // Check if RBAC tables exist
-      const rbacCheck = await pool.query(`
+      // Get organization ID from request context
+      const { isSystemOwnerWithoutCompany, getOrganizationIdFromRequest } = require('../utils/organizationFilter');
+      const organizationId = getOrganizationIdFromRequest(req);
+      
+      // Use getDb to ensure RLS is applied (used throughout this route)
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      // System owners without a selected company should only see system owners
+      if (isSystemOwnerWithoutCompany(req)) {
+        // Only return system owners when no company is selected
+        
+        const rbacCheck = await db.query(`
+          SELECT table_name 
+          FROM information_schema.tables 
+          WHERE table_schema = 'public' AND table_name = 'user_roles'
+        `);
+        const hasRBAC = rbacCheck.rows.length > 0;
+        
+        if (hasRBAC) {
+          const result = await db.query(`
+            SELECT 
+              u.id, u.username, u.email, u.full_name, u.role,
+              COALESCE(
+                (SELECT jsonb_agg(r.role_code ORDER BY r.role_code)
+                 FROM user_roles ur
+                 JOIN roles r ON ur.role_id = r.id
+                 WHERE ur.user_id = u.id),
+                COALESCE(u.roles, jsonb_build_array(u.role), '["technician"]'::jsonb)
+              ) as roles,
+              u.profile_image, u.is_active, u.created_at, u.last_login
+            FROM users u
+            WHERE u.id IN (
+              SELECT DISTINCT ur.user_id
+              FROM user_roles ur
+              JOIN roles r ON ur.role_id = r.id
+              WHERE r.role_code = 'system_owner'
+            )
+            OR u.role = 'system_owner' OR u.role = 'super_admin'
+            ORDER BY u.created_at DESC
+          `);
+          return res.json(result.rows);
+        } else {
+          const result = await db.query(`
+            SELECT id, username, email, full_name, role,
+                   COALESCE(roles, jsonb_build_array(role)) as roles,
+                   profile_image, is_active, created_at, last_login 
+            FROM users 
+            WHERE role = 'system_owner' OR role = 'super_admin'
+            ORDER BY created_at DESC
+          `);
+          return res.json(result.rows);
+        }
+      }
+      
+      // Check if RBAC tables exist (db already defined above)
+      const rbacCheck = await db.query(`
         SELECT table_name 
         FROM information_schema.tables 
         WHERE table_schema = 'public' AND table_name = 'user_roles'
@@ -106,11 +165,14 @@ module.exports = (pool) => {
       const hasRBAC = rbacCheck.rows.length > 0;
       const hasRolesColumn = await checkRolesColumn();
 
+      // PERMANENT SOLUTION: Filter users by organization
+      // - If organizationId exists: Show company users + system owners
+      // - If no organizationId: Already handled above (system owners only)
       let query;
       if (hasRBAC) {
         // Use RBAC system - get roles from user_roles table
-        // If not system_owner, exclude users with system_owner role
-        if (isSystemOwner) {
+        if (isSystemOwner && organizationId) {
+          // System owner with company selected: Show company users + system owners
           query = `
             SELECT 
               u.id, u.username, u.email, u.full_name, u.role,
@@ -123,10 +185,18 @@ module.exports = (pool) => {
               ) as roles,
               u.profile_image, u.is_active, u.created_at, u.last_login
             FROM users u
+            WHERE u.organization_id = $1
+               OR u.id IN (
+                 SELECT DISTINCT ur.user_id
+                 FROM user_roles ur
+                 JOIN roles r ON ur.role_id = r.id
+                 WHERE r.role_code = 'system_owner'
+               )
+               OR u.role = 'system_owner' OR u.role = 'super_admin'
             ORDER BY u.created_at DESC
           `;
-        } else {
-          // Operations Administrator: Exclude users with system_owner role
+        } else if (isSystemOwner && !organizationId) {
+          // System owner without company: Only system owners (shouldn't reach here due to check above, but safety)
           query = `
             SELECT 
               u.id, u.username, u.email, u.full_name, u.role,
@@ -139,53 +209,108 @@ module.exports = (pool) => {
               ) as roles,
               u.profile_image, u.is_active, u.created_at, u.last_login
             FROM users u
-            WHERE u.id NOT IN (
+            WHERE u.id IN (
               SELECT DISTINCT ur.user_id
               FROM user_roles ur
               JOIN roles r ON ur.role_id = r.id
               WHERE r.role_code = 'system_owner'
             )
-            AND (u.role != 'system_owner' AND u.role != 'super_admin')
+            OR u.role = 'system_owner' OR u.role = 'super_admin'
+            ORDER BY u.created_at DESC
+          `;
+        } else {
+          // Operations Administrator: Show only their organization's users (exclude system owners)
+          query = `
+            SELECT 
+              u.id, u.username, u.email, u.full_name, u.role,
+              COALESCE(
+                (SELECT jsonb_agg(r.role_code ORDER BY r.role_code)
+                 FROM user_roles ur
+                 JOIN roles r ON ur.role_id = r.id
+                 WHERE ur.user_id = u.id),
+                COALESCE(u.roles, jsonb_build_array(u.role), '["technician"]'::jsonb)
+              ) as roles,
+              u.profile_image, u.is_active, u.created_at, u.last_login
+            FROM users u
+            WHERE u.organization_id = $1
+              AND u.id NOT IN (
+                SELECT DISTINCT ur.user_id
+                FROM user_roles ur
+                JOIN roles r ON ur.role_id = r.id
+                WHERE r.role_code = 'system_owner'
+              )
+              AND (u.role != 'system_owner' AND u.role != 'super_admin')
             ORDER BY u.created_at DESC
           `;
         }
       } else if (hasRolesColumn) {
-        if (isSystemOwner) {
+        if (isSystemOwner && organizationId) {
+          // System owner with company: Show company users + system owners
           query = `SELECT id, username, email, full_name, role,
                           COALESCE(roles, jsonb_build_array(role)) as roles,
                           profile_image, is_active, created_at, last_login 
                    FROM users 
+                   WHERE organization_id = $1
+                      OR role = 'system_owner' OR role = 'super_admin'
+                   ORDER BY created_at DESC`;
+        } else if (isSystemOwner && !organizationId) {
+          // System owner without company: Only system owners
+          query = `SELECT id, username, email, full_name, role,
+                          COALESCE(roles, jsonb_build_array(role)) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   WHERE role = 'system_owner' OR role = 'super_admin'
                    ORDER BY created_at DESC`;
         } else {
-          // Operations Administrator: Exclude users with system_owner role
+          // Operations Administrator: Show only their organization's users
           query = `SELECT id, username, email, full_name, role,
                           COALESCE(roles, jsonb_build_array(role)) as roles,
                           profile_image, is_active, created_at, last_login 
                    FROM users 
-                   WHERE role != 'system_owner' 
+                   WHERE organization_id = $1
+                     AND role != 'system_owner' 
                      AND role != 'super_admin'
                      AND (roles IS NULL OR roles::text NOT LIKE '%system_owner%' AND roles::text NOT LIKE '%super_admin%')
                    ORDER BY created_at DESC`;
         }
       } else {
-        if (isSystemOwner) {
+        if (isSystemOwner && organizationId) {
+          // System owner with company: Show company users + system owners
           query = `SELECT id, username, email, full_name, role,
                           jsonb_build_array(role) as roles,
                           profile_image, is_active, created_at, last_login 
                    FROM users 
+                   WHERE organization_id = $1
+                      OR role = 'system_owner' OR role = 'super_admin'
+                   ORDER BY created_at DESC`;
+        } else if (isSystemOwner && !organizationId) {
+          // System owner without company: Only system owners
+          query = `SELECT id, username, email, full_name, role,
+                          jsonb_build_array(role) as roles,
+                          profile_image, is_active, created_at, last_login 
+                   FROM users 
+                   WHERE role = 'system_owner' OR role = 'super_admin'
                    ORDER BY created_at DESC`;
         } else {
-          // Operations Administrator: Exclude users with system_owner role
+          // Operations Administrator: Show only their organization's users
           query = `SELECT id, username, email, full_name, role,
                           jsonb_build_array(role) as roles,
                           profile_image, is_active, created_at, last_login 
                    FROM users 
-                   WHERE role != 'system_owner' AND role != 'super_admin'
+                   WHERE organization_id = $1
+                     AND role != 'system_owner' AND role != 'super_admin'
                    ORDER BY created_at DESC`;
         }
       }
 
-      const result = await pool.query(query);
+      // Execute query with organization_id parameter if needed
+      // db is already defined above (getDb() called for RBAC check)
+      let result;
+      if (organizationId) {
+        result = await db.query(query, [organizationId]);
+      } else {
+        result = await db.query(query);
+      }
       
       // Parse roles for each user and map legacy roles to RBAC roles
       const users = result.rows.map(user => {
@@ -370,10 +495,69 @@ module.exports = (pool) => {
   // Rate limiting removed for frequent use
   router.post('/', requireAdmin, validateCreateUser, async (req, res) => {
     try {
-      const { username, email, full_name, role, roles, password } = req.body;
+      const { username, email, full_name, role, roles, password, organization_id } = req.body;
 
       if (!username || !email || !full_name) {
         return res.status(400).json({ error: 'Username, email, and full name are required' });
+      }
+
+      // CRITICAL: Determine organization_id for user
+      // This prevents data leakage - users MUST belong to an organization
+      const { getOrganizationIdFromRequest, isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      let userOrganizationId = null;
+      
+      // Check if user is system_owner
+      const isSystemOwner = req.session.roles?.includes('system_owner') || 
+                           req.session.role === 'system_owner' ||
+                           req.session.roles?.includes('super_admin') ||
+                           req.session.role === 'super_admin';
+      
+      if (isSystemOwner) {
+        // System owner creating user: Use provided organization_id or require it
+        if (organization_id) {
+          // Verify organization exists
+          const orgCheck = await db.query('SELECT id, name, is_active FROM organizations WHERE id = $1', [organization_id]);
+          if (orgCheck.rows.length === 0) {
+            return res.status(400).json({ error: 'Invalid organization_id provided' });
+          }
+          if (!orgCheck.rows[0].is_active) {
+            return res.status(400).json({ error: 'Cannot create user for inactive organization' });
+          }
+          userOrganizationId = organization_id;
+        } else {
+          // System owner must specify organization_id when creating non-system-owner users
+          // Check if creating a system_owner user (they don't need organization_id)
+          const userRoles = roles || (role ? [role] : ['technician']);
+          const isCreatingSystemOwner = userRoles.includes('system_owner') || userRoles.includes('super_admin');
+          
+          if (!isCreatingSystemOwner) {
+            return res.status(400).json({ 
+              error: 'Organization is required', 
+              message: 'When creating a user, you must specify which organization they belong to. Use organization_id field.' 
+            });
+          }
+          // System owners don't have organization_id (platform-level users)
+          userOrganizationId = null;
+        }
+      } else {
+        // Regular admin creating user: Use their organization_id automatically
+        const adminOrgId = getOrganizationIdFromRequest(req);
+        if (!adminOrgId) {
+          return res.status(400).json({ 
+            error: 'Organization context required', 
+            message: 'You must belong to an organization to create users. Users will be assigned to your organization.' 
+          });
+        }
+        userOrganizationId = adminOrgId;
+        
+        // Regular admins cannot create system_owner users
+        const userRoles = roles || (role ? [role] : ['technician']);
+        if (userRoles.includes('system_owner') || userRoles.includes('super_admin')) {
+          return res.status(403).json({ error: 'Only system owners can create system owner users' });
+        }
       }
 
       // Use default password "witkop123" if no password provided (super admin only)
@@ -417,11 +601,7 @@ module.exports = (pool) => {
       const mappedRoles = userRoles.map(r => roleMapping[r] || r);
       
       // Only system_owner can assign system_owner role
-      const isSystemOwner = req.session.roles?.includes('system_owner') || 
-                           req.session.role === 'system_owner' ||
-                           req.session.roles?.includes('super_admin') ||
-                           req.session.role === 'super_admin';
-      
+      // Note: isSystemOwner was already declared above at line 513
       if (mappedRoles.includes('system_owner') && !isSystemOwner) {
         return res.status(403).json({ error: 'Only system owner can assign system_owner role' });
       }
@@ -440,15 +620,16 @@ module.exports = (pool) => {
       const passwordToHash = useDefaultPassword ? DEFAULT_PASSWORD : password;
       const passwordHash = await bcrypt.hash(passwordToHash, saltRounds);
 
-      // Insert user with password and roles
+      // Insert user with password, roles, and organization_id
+      // CRITICAL: organization_id is required for data isolation (except system_owner users)
       // Store roles as JSONB array, and set primary role (first role) for backward compatibility
       // Set password_changed to false if using default password
       const primaryRole = mappedRoles[0] || 'technician';
-      const result = await pool.query(
-        `INSERT INTO users (username, email, full_name, role, roles, password_hash, is_active, password_changed) 
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, true, $7) 
-         RETURNING id, username, email, full_name, role, roles, is_active, password_changed, created_at`,
-        [username, email, full_name, primaryRole, JSON.stringify(mappedRoles), passwordHash, !useDefaultPassword]
+      const result = await db.query(
+        `INSERT INTO users (username, email, full_name, role, roles, password_hash, is_active, password_changed, organization_id) 
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, true, $7, $8) 
+         RETURNING id, username, email, full_name, role, roles, is_active, password_changed, organization_id, created_at`,
+        [username, email, full_name, primaryRole, JSON.stringify(mappedRoles), passwordHash, !useDefaultPassword, userOrganizationId]
       );
 
       const user = result.rows[0];
@@ -499,7 +680,7 @@ module.exports = (pool) => {
   router.put('/:id', requireAdmin, validateUpdateUser, async (req, res) => {
     try {
       const { id } = req.params;
-      const { username, email, full_name, role, roles, is_active, password } = req.body;
+      const { username, email, full_name, role, roles, is_active, password, organization_id } = req.body;
 
       // Check if trying to assign super_admin role (only super_admin can do this)
       const isRequestingSuperAdmin = isSuperAdmin(req);
@@ -619,6 +800,54 @@ module.exports = (pool) => {
         values.push(passwordHash);
       }
 
+      // Handle organization_id update (only system owners can change it)
+      if (organization_id !== undefined) {
+        const isSystemOwner = req.session.roles?.includes('system_owner') || 
+                             req.session.role === 'system_owner' ||
+                             req.session.roles?.includes('super_admin') ||
+                             req.session.role === 'super_admin';
+        
+        if (!isSystemOwner) {
+          return res.status(403).json({ error: 'Only system owners can change user organization' });
+        }
+        
+        // Verify organization exists and is active
+        const { getDb } = require('../middleware/tenantContext');
+        const db = getDb(req, pool);
+        const orgCheck = await db.query('SELECT id, name, is_active FROM organizations WHERE id = $1', [organization_id]);
+        if (orgCheck.rows.length === 0) {
+          return res.status(400).json({ error: 'Invalid organization_id provided' });
+        }
+        if (!orgCheck.rows[0].is_active) {
+          return res.status(400).json({ error: 'Cannot assign user to inactive organization' });
+        }
+        
+        // System owners cannot have organization_id (they're platform-level)
+        // Check if user being updated is a system owner
+        const userCheck = await db.query(
+          `SELECT u.id, u.role, 
+                  EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = u.id AND r.role_code = 'system_owner') as has_system_owner_role
+           FROM users u WHERE u.id = $1`,
+          [id]
+        );
+        
+        if (userCheck.rows.length > 0) {
+          const user = userCheck.rows[0];
+          const isUserSystemOwner = user.role === 'system_owner' || user.role === 'super_admin' || user.has_system_owner_role;
+          
+          if (isUserSystemOwner && organization_id !== null) {
+            return res.status(400).json({ error: 'System owners cannot be assigned to an organization' });
+          }
+          
+          if (!isUserSystemOwner && organization_id === null) {
+            return res.status(400).json({ error: 'Non-system-owner users must belong to an organization' });
+          }
+        }
+        
+        updates.push(`organization_id = $${paramCount++}`);
+        values.push(organization_id);
+      }
+
       if (updates.length === 0) {
         return res.status(400).json({ error: 'No fields to update' });
       }
@@ -634,9 +863,12 @@ module.exports = (pool) => {
       const query = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} 
                      RETURNING id, username, email, full_name, role, 
                                ${rolesSelect},
-                               profile_image, is_active, created_at, last_login`;
+                               profile_image, is_active, organization_id, created_at, last_login`;
 
-      const result = await pool.query(query, values);
+      // Use getDb for RLS-aware queries
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      const result = await db.query(query, values);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'User not found' });
@@ -896,14 +1128,37 @@ module.exports = (pool) => {
     }
   });
 
-  // Configure multer for profile image uploads
+  // Configure multer for profile image uploads (company-scoped by slug)
+  const { 
+    getOrganizationSlugFromRequest, 
+    getStoragePath, 
+    getFileUrl,
+    ensureCompanyDirs,
+    getOrganizationSlugById
+  } = require('../utils/organizationStorage');
+
   const profileImageStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      const uploadDir = path.join(__dirname, '../uploads/profiles');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
+    destination: async (req, file, cb) => {
+      try {
+        const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+        if (!organizationSlug) {
+          // Fallback to global profiles directory if no org context
+          const uploadDir = path.join(__dirname, '../uploads/profiles');
+          if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+          }
+          return cb(null, uploadDir);
+        }
+
+        // Ensure company directories exist
+        await ensureCompanyDirs(organizationSlug);
+        
+        // Use company-scoped profiles directory
+        const uploadDir = getStoragePath(organizationSlug, 'profiles');
+        cb(null, uploadDir);
+      } catch (error) {
+        cb(error);
       }
-      cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
       // Generate unique filename: profile-userId-timestamp-uuid-originalname
@@ -1049,7 +1304,12 @@ module.exports = (pool) => {
       }
 
       const filename = req.file.filename;
-      const filePath = `/uploads/profiles/${filename}`;
+      
+      // Get organization slug for path generation
+      const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+      const filePath = organizationSlug 
+        ? getFileUrl(organizationSlug, 'profiles', filename)
+        : `/uploads/profiles/${filename}`; // Fallback to global path
 
       console.log('[PROFILE IMAGE] Updating user profile_image:', filePath);
 

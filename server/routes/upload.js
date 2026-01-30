@@ -5,16 +5,33 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { validateUploadedFile } = require('../utils/fileValidator');
 const logger = require('../utils/logger');
+const { 
+  getOrganizationSlugFromRequest, 
+  getStoragePath, 
+  getFileUrl,
+  ensureCompanyDirs,
+  getOrganizationSlugById
+} = require('../utils/organizationStorage');
 
-// Configure multer for file uploads
+// Configure multer for file uploads (company-scoped by slug)
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '../uploads');
-    // Create uploads directory if it doesn't exist
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+  destination: async (req, file, cb) => {
+    try {
+      const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+      
+      if (!organizationSlug) {
+        return cb(new Error('Organization context is required for file uploads'));
+      }
+
+      // Ensure company directories exist
+      await ensureCompanyDirs(organizationSlug);
+      
+      // Get company-scoped images directory
+      const uploadDir = getStoragePath(organizationSlug, 'images');
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error);
     }
-    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     // Generate unique filename: timestamp-uuid-originalname
@@ -83,6 +100,25 @@ module.exports = (pool) => {
         return res.status(400).json({ error: 'task_id, item_id, and section_id are required' });
       }
 
+      // Get organization slug from request context
+      let organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+      if (!organizationSlug) {
+        // Try to get from task's organization_id as fallback
+        const taskResult = await pool.query(
+          'SELECT organization_id FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        if (taskResult.rows.length === 0 || !taskResult.rows[0].organization_id) {
+          fs.unlinkSync(req.file.path);
+          return res.status(400).json({ error: 'Unable to determine organization context' });
+        }
+        organizationSlug = await getOrganizationSlugById(pool, taskResult.rows[0].organization_id);
+        if (!organizationSlug) {
+          fs.unlinkSync(req.file.path);
+          return res.status(400).json({ error: 'Unable to determine organization context' });
+        }
+      }
+
       // Save image record to database
       const result = await pool.query(
         `INSERT INTO failed_item_images (
@@ -94,7 +130,7 @@ module.exports = (pool) => {
           checklist_response_id || null,
           item_id,
           section_id,
-          `/uploads/${req.file.filename}`, // Relative path for serving
+          getFileUrl(organizationSlug, 'images', req.file.filename), // Company-scoped path
           req.file.originalname,
           comment || null,
           req.body.uploaded_by || null
@@ -135,49 +171,8 @@ module.exports = (pool) => {
     }
   });
 
-  // Serve uploaded images
-  // This route is at /api/upload/:filename
-  // But static files are also served at /uploads/:filename (in index.js)
-  // This route provides an alternative API endpoint for images
-  router.get('/:filename', (req, res) => {
-    // Extract just the filename (in case full path is passed)
-    let filename = req.params.filename;
-    if (filename.includes('/')) {
-      filename = filename.split('/').pop();
-    }
-    
-    const filePath = path.join(__dirname, '../uploads', filename);
-    
-    // Security: Check if file exists and is within uploads directory
-    if (!fs.existsSync(filePath)) {
-      logger.warn('Image not found', { filename, filePath, params: req.params });
-      return res.status(404).json({ error: 'Image not found', filename: filename });
-    }
-
-    // Check if path is within uploads directory (prevent directory traversal)
-    const uploadsDir = path.join(__dirname, '../uploads');
-    const resolvedPath = path.resolve(filePath);
-    const resolvedDir = path.resolve(uploadsDir);
-    
-    if (!resolvedPath.startsWith(resolvedDir)) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    // Set proper content type for images
-    const ext = path.extname(filename).toLowerCase();
-    const contentTypeMap = {
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.png': 'image/png',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp'
-    };
-    const contentType = contentTypeMap[ext] || 'application/octet-stream';
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    
-    res.sendFile(filePath);
-  });
+  // Legacy route removed - images are now served via company-scoped routes: /uploads/companies/{slug}/images/{filename}
+  // Use the main file serving route in server/index.js instead
 
   return router;
 };

@@ -75,6 +75,27 @@ async function createNotification(pool, notificationData) {
     
     const { user_id, task_id, type, title, message, metadata } = notificationData;
     
+    // Get user's organization_id and roles to determine if they're system_owner
+    const userResult = await client.query(
+      'SELECT organization_id, role, roles FROM users WHERE id = $1',
+      [user_id]
+    );
+    
+    let organizationId = null;
+    if (userResult.rows.length > 0) {
+      const user = userResult.rows[0];
+      // Check if user is system_owner (platform creator - doesn't belong to any organization)
+      const userRoles = user.roles ? (typeof user.roles === 'string' ? JSON.parse(user.roles) : user.roles) : [user.role];
+      const isSystemOwner = userRoles.includes('system_owner') || user.role === 'system_owner' || userRoles.includes('super_admin') || user.role === 'super_admin';
+      
+      // For system_owner users, organization_id can be NULL
+      // For regular tenant users, use their organization_id
+      if (!isSystemOwner && user.organization_id) {
+        organizationId = user.organization_id;
+      }
+      // If system_owner, organizationId remains null
+    }
+    
     // Generate deterministic idempotency key
     const idempotencyKey = generateIdempotencyKey(notificationData);
     
@@ -87,6 +108,7 @@ async function createNotification(pool, notificationData) {
       type,
       title,
       request_id: requestId,
+      organization_id: organizationId,
       idempotency_key: idempotencyKey,
       timestamp: new Date().toISOString()
     });
@@ -112,15 +134,17 @@ async function createNotification(pool, notificationData) {
       return { id: existingCheck.rows[0].id };
     }
     
-    // Insert notification with idempotency key
+    // Insert notification with idempotency key and organization_id
     // The application-level check above should prevent most duplicates
     // If a duplicate still occurs (race condition), the unique index will prevent it
+    // organization_id can be NULL for system_owner users
     const result = await client.query(
-      `INSERT INTO notifications (user_id, task_id, type, title, message, metadata, idempotency_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO notifications (user_id, organization_id, task_id, type, title, message, metadata, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id, created_at`,
       [
-        user_id, 
+        user_id,
+        organizationId, // Can be NULL for system users
         task_id || null, 
         type, 
         title, 

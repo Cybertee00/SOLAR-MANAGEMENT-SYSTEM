@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { getTasks, createTask, getChecklistTemplates, getUsers } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { hasOrganizationContext, isSystemOwnerWithoutCompany } from '../utils/organizationContext';
 import { getErrorMessage } from '../utils/errorHandler';
 
 function Tasks() {
-  const { isAdmin, isSuperAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin, user, loading: authLoading } = useAuth();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -30,15 +31,28 @@ function Tasks() {
   });
 
   useEffect(() => {
+    // Wait for AuthContext to finish loading before checking organization context
+    if (authLoading) {
+      return; // Don't check until auth is loaded
+    }
+    
     loadTasks();
     loadTemplates();
     if (isAdmin()) {
       loadUsers();
     }
-  }, [filters, isAdmin]);
+  }, [filters, isAdmin, authLoading]);
 
   const loadTasks = async () => {
     try {
+      // Check if user has organization context
+      if (!hasOrganizationContext(user)) {
+        // System owner without company: show empty tasks
+        setTasks([]);
+        setLoading(false);
+        return;
+      }
+      
       const params = { task_type: 'PM' }; // Filter for PM tasks only
       if (filters.status) params.status = filters.status;
       if (filters.completed_date) params.completed_date = filters.completed_date;
@@ -55,6 +69,13 @@ function Tasks() {
 
   const loadTemplates = async () => {
     try {
+      // Check if user has organization context
+      if (!hasOrganizationContext(user)) {
+        // System owner without company: show empty templates
+        setTemplates([]);
+        return;
+      }
+      
       console.log('Loading templates for task creation...');
       const response = await getChecklistTemplates();
       console.log('Templates loaded:', response.data);

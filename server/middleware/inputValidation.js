@@ -237,7 +237,7 @@ function removeUnexpectedFields(allowedFields) {
  * User creation validation schema
  */
 const validateCreateUser = [
-  removeUnexpectedFields(['username', 'email', 'full_name', 'role', 'roles', 'password']),
+  removeUnexpectedFields(['username', 'email', 'full_name', 'role', 'roles', 'password', 'organization_id']),
   validateUsername(),
   validateEmail('email'),
   validateString('full_name', 255, true),
@@ -267,6 +267,9 @@ const validateCreateUser = [
     .optional()
     .isLength({ min: 6, max: 128 })
     .withMessage('Password must be between 6 and 128 characters'),
+  // organization_id is optional in validation (handled in route logic)
+  // System owners can provide it, regular admins get it automatically
+  validateUUID('organization_id', 'body').optional(),
   handleValidationErrors
 ];
 
@@ -274,7 +277,7 @@ const validateCreateUser = [
  * User update validation schema
  */
 const validateUpdateUser = [
-  removeUnexpectedFields(['email', 'full_name', 'role', 'roles', 'password', 'is_active']),
+  removeUnexpectedFields(['username', 'email', 'full_name', 'role', 'roles', 'password', 'is_active', 'organization_id']),
   validateUUID('id', 'param'),
   validateEmail('email').optional(),
   validateString('full_name', 255).optional(),
@@ -307,6 +310,8 @@ const validateUpdateUser = [
     .isLength({ min: 6, max: 128 })
     .withMessage('Password must be between 6 and 128 characters'),
   body('is_active').optional().isBoolean().withMessage('is_active must be a boolean'),
+  // organization_id is optional in validation (handled in route logic)
+  validateUUID('organization_id', 'body').optional(),
   handleValidationErrors
 ];
 

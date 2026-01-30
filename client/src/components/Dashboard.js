@@ -9,6 +9,9 @@ import {
 } from '../api/api';
 import './Dashboard.css';
 import sieLogo from '../assets/SIE_logo.png';
+import { getApiBaseUrl } from '../api/api';
+import { useAuth } from '../context/AuthContext';
+import { hasOrganizationContext, isSystemOwnerWithoutCompany, getCurrentOrganizationSlug } from '../utils/organizationContext';
 import { 
   Chart as ChartJS, 
   ArcElement, 
@@ -174,6 +177,8 @@ const createHorizontalGradient = (ctx, chartArea, color1, color2) => {
 };
 
 function Dashboard() {
+  const { user, loading: authLoading } = useAuth();
+  const [companyLogo, setCompanyLogo] = useState(null); // Start with null, only set if company is selected
   const [stats, setStats] = useState({
     pendingTasks: 0,
     inProgressTasks: 0,
@@ -198,31 +203,121 @@ function Dashboard() {
   const [todayActivities, setTodayActivities] = useState([]);
 
   useEffect(() => {
-    loadDashboardData();
+    // Wait for AuthContext to finish loading before checking organization context
+    if (authLoading) {
+      return; // Don't check until auth is loaded
+    }
     
-    // Auto-refresh dashboard data every 30 seconds
-    const refreshInterval = setInterval(() => {
+    // Only load data if user has organization context
+    if (hasOrganizationContext(user)) {
       loadDashboardData();
-    }, 30000); // 30 seconds
-    
-    return () => clearInterval(refreshInterval);
-  }, [pmPeriod]);
+      loadCompanyLogo();
+      
+      // Auto-refresh dashboard data every 30 seconds
+      const refreshInterval = setInterval(() => {
+        loadDashboardData();
+      }, 30000); // 30 seconds
+      
+      return () => clearInterval(refreshInterval);
+    } else {
+      // System owner without company: show empty dashboard
+      setStats({ pendingTasks: 0, inProgressTasks: 0, completedTasks: 0, openCMLetters: 0 });
+      setPmStats({ total: 0, completed: 0 });
+      setGrassCuttingProgress(0);
+      setPanelWashProgress(0);
+      setInventoryStats({ inStock: 0, lowStock: 0, outOfStock: 0, total: 0 });
+      setTodayActivities([]);
+      setCompanyLogo(null); // No logo when no company selected
+      setLoading(false);
+    }
+  }, [pmPeriod, user, authLoading]);
+
+  /**
+   * Load company logo dynamically for the selected organization
+   * 
+   * UNIVERSAL IMPLEMENTATION: Works for ALL companies automatically
+   * - Logo path: /uploads/companies/{organizationSlug}/logos/logo.png
+   * - CSS class "dashboard-logo" automatically applies animation
+   * - No company-specific code needed
+   * 
+   * See: server/docs/LOGO_ANIMATION_IMPLEMENTATION.md for documentation
+   */
+  const loadCompanyLogo = async () => {
+    try {
+      // Check if user has organization context
+      if (!hasOrganizationContext(user)) {
+        // System owner without company: no logo
+        setCompanyLogo(null);
+        return;
+      }
+      
+      // Get organization slug (works for ANY company)
+      const organizationSlug = getCurrentOrganizationSlug(user);
+      
+      if (!organizationSlug) {
+        // No slug found, no logo
+        setCompanyLogo(null);
+        return;
+      }
+
+      // Construct logo URL
+      // getApiBaseUrl() returns something like "http://localhost:3001/api"
+      // But uploads route is at "/uploads/..." (not "/api/uploads/...")
+      // So we need to remove "/api" from the base URL
+      const apiBaseUrl = getApiBaseUrl();
+      const baseUrl = apiBaseUrl.replace('/api', '');
+      const logoUrl = `${baseUrl}/uploads/companies/${organizationSlug}/logos/logo.png`;
+      
+      // Test if logo exists by trying to load it
+      const img = new Image();
+      img.onload = () => {
+        // Logo loaded successfully - CSS class "dashboard-logo" will apply animation automatically
+        setCompanyLogo(logoUrl);
+      };
+      img.onerror = () => {
+        // Company logo doesn't exist, don't show any logo
+        setCompanyLogo(null);
+      };
+      img.src = logoUrl;
+    } catch (error) {
+      console.error('Error loading company logo:', error);
+      // On error, don't show any logo
+      setCompanyLogo(null);
+    }
+  };
 
   const loadDashboardData = async () => {
     try {
+      // Check if user has organization context
+      if (!hasOrganizationContext(user)) {
+        // System owner without company: set all stats to zero
+        setStats({ pendingTasks: 0, inProgressTasks: 0, completedTasks: 0, openCMLetters: 0 });
+        setPmStats({ total: 0, completed: 0 });
+        setGrassCuttingProgress(0);
+        setPanelWashProgress(0);
+        setInventoryStats({ inStock: 0, lowStock: 0, outOfStock: 0, total: 0 });
+        setTodayActivities([]);
+        setLoading(false);
+        return;
+      }
+      
       setLoading(true);
       
       // Load all data in parallel
+      // IMPORTANT: All API calls are company-specific via tenantContextMiddleware
       const [tasksRes, cmLettersRes, plantRes, inventoryRes] = await Promise.all([
         getTasks({ task_type: 'PM' }),
         getCMLetters({ status: 'open' }),
-        getPlantMapStructure().catch(() => ({ structure: [] })),
+        getPlantMapStructure().catch(() => ({ structure: [] })), // Returns empty if no company map
         getInventoryItems().catch(() => ({ data: [] }))
       ]);
 
       const tasks = tasksRes.data || [];
       const cmLetters = cmLettersRes.data || [];
-      const plantStructure = plantRes.structure || [];
+      // plantStructure is company-specific - comes from company folder only
+      const plantStructure = (plantRes && plantRes.structure && Array.isArray(plantRes.structure)) 
+        ? plantRes.structure 
+        : [];
       const inventoryItems = inventoryRes.data || [];
 
       // Calculate stats
@@ -263,11 +358,14 @@ function Dashboard() {
       setPmStats(pmData);
 
       // Calculate Grass Cutting and Panel Wash progress from Plant data
-      // Same logic as Plant.js: (done + halfway * 0.5) / total * 100
-      const allTrackers = plantStructure.filter(t => 
-        t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id)
-      );
+      // PERMANENT SOLUTION: plantStructure comes from getPlantMapStructure() which loads from company folder
+      // If plantStructure is empty or null, progress must be 0 (company has no map data)
+      // This ensures no cross-company data leakage
+      const allTrackers = plantStructure && Array.isArray(plantStructure) && plantStructure.length > 0
+        ? plantStructure.filter(t => t && t.id && t.id.startsWith('M') && /^M\d{2}$/.test(t.id))
+        : [];
 
+      // Only calculate progress if company has trackers (has plant map)
       if (allTrackers.length > 0) {
         // Grass Cutting
         const grassDoneCount = allTrackers.filter(t => {
@@ -292,6 +390,10 @@ function Dashboard() {
         }).length;
         const panelProgress = ((panelDoneCount + panelHalfwayCount * 0.5) / allTrackers.length) * 100;
         setPanelWashProgress(panelProgress);
+      } else {
+        // No trackers = no progress (company has no plant map)
+        setGrassCuttingProgress(0);
+        setPanelWashProgress(0);
       }
 
       // Calculate Inventory Stats
@@ -688,31 +790,33 @@ function Dashboard() {
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        <img src={sieLogo} alt="SIE Logo" className="dashboard-logo" />
+        {companyLogo && (
+          <img src={companyLogo} alt="Company Logo" className="dashboard-logo" />
+        )}
         <h2 className="dashboard-title">Dashboard</h2>
       </div>
       
       {/* Stat Cards */}
       <div className="dashboard-stats">
-        <Link to="/tasks" className="card stat-card">
+        <Link to="/tenant/tasks" className="card stat-card">
           <h3>Pending Tasks</h3>
           <p className="stat-number" style={{ color: '#ffc107' }}>
             {stats.pendingTasks}
           </p>
         </Link>
-        <Link to="/tasks" className="card stat-card">
+        <Link to="/tenant/tasks" className="card stat-card">
           <h3>In Progress</h3>
           <p className="stat-number" style={{ color: '#17a2b8' }}>
             {stats.inProgressTasks}
           </p>
         </Link>
-        <Link to="/tasks" className="card stat-card">
+        <Link to="/tenant/tasks" className="card stat-card">
           <h3>Completed</h3>
           <p className="stat-number" style={{ color: '#28a745' }}>
             {stats.completedTasks}
           </p>
         </Link>
-        <Link to="/cm-letters" className="card stat-card">
+        <Link to="/tenant/cm-letters" className="card stat-card">
           <h3>Open CM Letters</h3>
           <p className="stat-number" style={{ color: '#dc3545' }}>
             {stats.openCMLetters}
@@ -781,7 +885,7 @@ function Dashboard() {
               </div>
             </div>
             <div className="card-footer">
-              <Link to="/tasks" className="view-button">View</Link>
+              <Link to="/tenant/tasks" className="view-button">View</Link>
             </div>
           </div>
 
@@ -821,7 +925,7 @@ function Dashboard() {
               </div>
             </div>
             <div className="card-footer">
-              <Link to="/plant" className="view-button">View</Link>
+              <Link to="/tenant/plant" className="view-button">View</Link>
             </div>
           </div>
         </div>
@@ -878,7 +982,7 @@ function Dashboard() {
               )}
             </div>
             <div className="card-footer">
-              <Link to="/calendar" className="view-button">View</Link>
+              <Link to="/tenant/calendar" className="view-button">View</Link>
             </div>
           </div>
 
@@ -931,7 +1035,7 @@ function Dashboard() {
               />
             </div>
             <div className="card-footer">
-              <Link to="/inventory" className="view-button">View</Link>
+              <Link to="/tenant/inventory" className="view-button">View</Link>
             </div>
           </div>
         </div>

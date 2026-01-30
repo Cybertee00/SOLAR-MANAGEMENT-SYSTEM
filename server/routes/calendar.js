@@ -8,25 +8,44 @@ module.exports = (pool) => {
   // Get all calendar events for a date range
   router.get('/', requireAuth, async (req, res) => {
     try {
+      // System owners without a selected company should see no calendar events
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.json([]);
+      }
+      
+      // Get organization ID from request context (for explicit filtering)
+      const { getOrganizationIdFromRequest } = require('../utils/organizationFilter');
+      const organizationId = getOrganizationIdFromRequest(req);
+      
+      if (!organizationId) {
+        return res.json([]);
+      }
+      
       const { start_date, end_date, year } = req.query;
       
-      let query = 'SELECT * FROM calendar_events';
-      const params = [];
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      let query = 'SELECT * FROM calendar_events WHERE organization_id = $1';
+      const params = [organizationId];
+      let paramCount = 2;
       
       if (year) {
-        query += ' WHERE EXTRACT(YEAR FROM event_date) = $1';
+        query += ` AND EXTRACT(YEAR FROM event_date) = $${paramCount++}`;
         params.push(year);
       } else if (start_date && end_date) {
-        query += ' WHERE event_date >= $1 AND event_date <= $2';
+        query += ` AND event_date >= $${paramCount++} AND event_date <= $${paramCount++}`;
         params.push(start_date, end_date);
       } else if (start_date) {
-        query += ' WHERE event_date >= $1';
+        query += ` AND event_date >= $${paramCount++}`;
         params.push(start_date);
       }
       
       query += ' ORDER BY event_date, task_title';
       
-      const result = await pool.query(query, params);
+      const result = await db.query(query, params);
       
       // Format dates properly (avoid UTC conversion that shifts days)
       const formatDate = (date) => {
@@ -53,10 +72,28 @@ module.exports = (pool) => {
   // Get calendar events for a specific date
   router.get('/date/:date', requireAuth, async (req, res) => {
     try {
+      // System owners without a selected company should see no calendar events
+      const { isSystemOwnerWithoutCompany, getOrganizationIdFromRequest } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.json([]);
+      }
+      
+      // Get organization ID from request context (for explicit filtering)
+      const organizationId = getOrganizationIdFromRequest(req);
+      if (!organizationId) {
+        return res.json([]);
+      }
+      
       const { date } = req.params;
-      const result = await pool.query(
-        'SELECT * FROM calendar_events WHERE event_date = $1 ORDER BY task_title',
-        [date]
+      
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      // Explicitly filter by organization_id (backup to RLS)
+      const result = await db.query(
+        'SELECT * FROM calendar_events WHERE organization_id = $1 AND event_date = $2 ORDER BY task_title',
+        [organizationId, date]
       );
       
       // Format dates properly (avoid UTC conversion that shifts days)
@@ -83,6 +120,12 @@ module.exports = (pool) => {
   // Create a new calendar event
   router.post('/', requireAuth, async (req, res) => {
     try {
+      // System owners without a selected company cannot create calendar events
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.status(403).json({ error: 'Please select a company to create calendar events' });
+      }
+      
       const {
         event_date,
         task_title,
@@ -98,7 +141,11 @@ module.exports = (pool) => {
         return res.status(400).json({ error: 'event_date and task_title are required' });
       }
 
-      const result = await pool.query(
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      const result = await db.query(
         `INSERT INTO calendar_events 
          (event_date, task_title, procedure_code, description, task_id, checklist_template_id, asset_id, frequency, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -131,6 +178,12 @@ module.exports = (pool) => {
   // Update a calendar event
   router.put('/:id', requireAuth, async (req, res) => {
     try {
+      // System owners without a selected company cannot update calendar events
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.status(403).json({ error: 'Please select a company to update calendar events' });
+      }
+      
       const { id } = req.params;
       const {
         event_date,
@@ -143,7 +196,11 @@ module.exports = (pool) => {
         frequency
       } = req.body;
 
-      const result = await pool.query(
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      const result = await db.query(
         `UPDATE calendar_events 
          SET event_date = $1,
              task_title = $2,
@@ -188,8 +245,19 @@ module.exports = (pool) => {
   // Delete a calendar event
   router.delete('/:id', requireAuth, async (req, res) => {
     try {
+      // System owners without a selected company cannot delete calendar events
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.status(403).json({ error: 'Please select a company to delete calendar events' });
+      }
+      
       const { id } = req.params;
-      const result = await pool.query(
+      
+      // Use getDb to ensure RLS is applied
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      
+      const result = await db.query(
         'DELETE FROM calendar_events WHERE id = $1 RETURNING *',
         [id]
       );

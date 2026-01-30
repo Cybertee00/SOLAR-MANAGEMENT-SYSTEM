@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, downloadYearCalendar } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { hasOrganizationContext, isSystemOwnerWithoutCompany } from '../utils/organizationContext';
 import './Calendar.css';
 
 // Color mapping for different task frequencies (from Excel - 100% match)
@@ -86,7 +87,7 @@ function getEventColor(event) {
 }
 
 function Calendar() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user, loading: authLoading } = useAuth();
   // Initialize to January 2026 (or current date if already 2026+)
   const getInitialDate = () => {
     const today = new Date();
@@ -124,8 +125,20 @@ function Calendar() {
   };
 
   useEffect(() => {
-    loadEvents();
-  }, [currentYear, currentMonth]);
+    // Wait for AuthContext to finish loading before checking organization context
+    if (authLoading) {
+      return; // Don't check until auth is loaded
+    }
+    
+    // Only load events if user has organization context
+    if (hasOrganizationContext(user)) {
+      loadEvents();
+    } else {
+      // System owner without company: show empty calendar
+      setEvents({});
+      setLoading(false);
+    }
+  }, [currentYear, currentMonth, user, authLoading]);
 
   // Helper to format date without UTC conversion
   const formatLocalDate = (date) => {

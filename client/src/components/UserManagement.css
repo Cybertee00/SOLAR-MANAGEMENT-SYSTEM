@@ -84,7 +84,7 @@
 .users-table td:last-child > div {
   display: flex;
   flex-direction: row;
-  gap: 8px;
+  gap: 2px;
   align-items: center;
   justify-content: center;
   flex-wrap: nowrap;
@@ -193,6 +193,143 @@
   padding: 6px 12px;
   font-size: 14px;
   margin-right: 5px;
+}
+
+.btn-xs {
+  padding: 1px 4px;
+  font-size: 11px;
+  min-height: 18px;
+  line-height: 1.0;
+  margin-right: 0;
+  font-weight: 500;
+  border-radius: 2px;
+  letter-spacing: 0px;
+  white-space: nowrap;
+  text-transform: none;
+}
+
+.btn-xs.btn-danger-icon {
+  padding: 1px 3px;
+  font-size: 11px;
+  min-width: 18px;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: none;
+}
+
+.btn-xs.btn-warning-icon {
+  padding: 1px 3px;
+  font-size: 11px;
+  min-width: 18px;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: none;
+  background-color: #ffc107;
+  color: #333;
+  border-color: #ffc107;
+}
+
+.btn-xs.btn-warning-icon:hover {
+  background-color: #e0a800;
+  border-color: #d39e00;
+}
+
+.btn-xs.btn-success-icon {
+  padding: 1px 3px;
+  font-size: 11px;
+  min-width: 18px;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: none;
+  background-color: #28a745;
+  color: white;
+  border-color: #28a745;
+}
+
+.btn-xs.btn-success-icon:hover {
+  background-color: #218838;
+  border-color: #1e7e34;
+}
+
+.btn-xs.btn-warning {
+  background-color: #ffc107;
+  color: #333;
+  border-color: #ffc107;
+  padding: 1px 4px;
+}
+
+.btn-xs.btn-warning:hover {
+  background-color: #e0a800;
+  border-color: #d39e00;
+}
+
+.btn-xs.btn-success {
+  background-color: #28a745;
+  color: white;
+  border-color: #28a745;
+  padding: 1px 4px;
+}
+
+.btn-xs.btn-success:hover {
+  background-color: #218838;
+  border-color: #1e7e34;
+}
+
+.btn-xs.btn-primary {
+  padding: 1px 4px;
+}
+
+.btn-xs.btn-secondary {
+  padding: 1px 4px;
+}
+
+/* Organization Menu Dropdown */
+.org-menu-container {
+  position: relative;
+  display: inline-block;
+}
+
+.org-menu-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  min-width: 120px;
+  overflow: hidden;
+}
+
+.org-menu-item {
+  display: block;
+  padding: 8px 12px;
+  color: #333;
+  text-decoration: none;
+  font-size: 11px;
+  transition: background-color 0.2s;
+  border-bottom: 1px solid #f0f0f0;
+  white-space: nowrap;
+}
+
+.org-menu-item:last-child {
+  border-bottom: none;
+}
+
+.org-menu-item:hover {
+  background-color: #f5f5f5;
+}
+
+.org-menu-item:active {
+  background-color: #e0e0e0;
 }
 
 .text-center {
@@ -394,12 +531,30 @@
 
   .users-table td:last-child > div > .btn {
     flex: 0 0 auto;
-    min-width: 90px;
-    max-width: 130px;
+    min-width: 70px;
+    max-width: 100px;
     margin: 0;
-    padding: 4px 10px !important;
-    font-size: 11px !important;
-    min-height: 30px !important;
+    padding: 3px 8px !important;
+    font-size: 10px !important;
+    min-height: 26px !important;
+  }
+  
+  .users-table td:last-child > div > .btn-xs {
+    min-width: 40px;
+    max-width: 65px;
+    padding: 1px 3px !important;
+    font-size: 10px !important;
+    min-height: 16px !important;
+    text-transform: none !important;
+  }
+  
+  .users-table td:last-child > div > .btn-danger-icon {
+    min-width: 16px;
+    max-width: 20px;
+    padding: 1px 2px !important;
+    font-size: 10px !important;
+    min-height: 16px !important;
+    text-transform: none !important;
   }
 
   /* Make badges wrap nicely on mobile - align right */
@@ -505,5 +660,256 @@
   
   .role-descriptions li {
     font-size: 10px;
+  }
+}
+
+/* Delete Confirmation Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.delete-confirmation-modal {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-width: 600px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: #d32f2f;
+  font-size: 24px;
+}
+
+.modal-body {
+  padding: 24px;
+}
+
+.warning-message {
+  margin-bottom: 24px;
+}
+
+.warning-message p {
+  margin: 8px 0;
+  line-height: 1.6;
+}
+
+.danger-text {
+  color: #d32f2f;
+  font-weight: 600;
+  margin-top: 16px !important;
+}
+
+.organization-details {
+  background: #f5f5f5;
+  padding: 16px;
+  border-radius: 6px;
+  margin: 16px 0;
+}
+
+.organization-details p {
+  margin: 6px 0;
+}
+
+.deletion-list {
+  margin: 12px 0;
+  padding-left: 24px;
+  color: #666;
+}
+
+.deletion-list li {
+  margin: 6px 0;
+  line-height: 1.5;
+}
+
+.confirmation-input {
+  margin-top: 24px;
+}
+
+.confirmation-input label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #333;
+}
+
+.confirmation-input input {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 16px;
+  transition: border-color 0.3s;
+}
+
+.confirmation-input input:focus {
+  outline: none;
+  border-color: #d32f2f;
+}
+
+.confirmation-input input:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.modal-footer {
+  padding: 20px 24px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.modal-footer .btn {
+  padding: 10px 20px;
+  font-size: 14px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.modal-footer .btn-danger {
+  background-color: #d32f2f;
+  color: white;
+}
+
+.modal-footer .btn-danger:hover:not(:disabled) {
+  background-color: #b71c1c;
+}
+
+.modal-footer .btn-danger:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.modal-footer .btn-secondary {
+  background-color: #6c757d;
+  color: white;
+}
+
+.modal-footer .btn-secondary:hover:not(:disabled) {
+  background-color: #5a6268;
+}
+
+@media (max-width: 768px) {
+  .delete-confirmation-modal {
+    max-width: 100%;
+    margin: 0;
+  }
+  
+  .modal-header,
+  .modal-body,
+  .modal-footer {
+    padding: 16px;
+  }
+  
+  .modal-footer {
+    flex-direction: column;
+  }
+  
+  .modal-footer .btn {
+    width: 100%;
+  }
+}
+
+/* Organization Management Page Styles */
+.user-management-container {
+  padding: 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.user-management-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 12px;
+}
+
+.user-management-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.user-form-container {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.user-form-container h3 {
+  margin: 0 0 20px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.users-table-container {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.error-message {
+  background-color: #fee;
+  color: #c33;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  border: 1px solid #fcc;
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+@media (max-width: 768px) {
+  .user-management-container {
+    padding: 12px;
+  }
+  
+  .user-management-header {
+    flex-direction: column;
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+  
+  .user-management-header h2 {
+    font-size: 18px;
+  }
+  
+  .user-form-container {
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  
+  .users-table-container {
+    margin-top: 4px;
   }
 }

@@ -11,6 +11,7 @@ function UserManagement() {
   const { hasRole } = usePermissions();
   const [users, setUsers] = useState([]);
   const [availableRoles, setAvailableRoles] = useState([]);
+  const [availableOrganizations, setAvailableOrganizations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -23,7 +24,8 @@ function UserManagement() {
     full_name: '',
     role: 'technician', // For backward compatibility
     roles: ['technician'], // Multiple roles
-    password: ''
+    password: '',
+    organization_id: '' // For system owners to select organization
   });
   const [roleEditData, setRoleEditData] = useState({
     roles: ['technician']
@@ -54,6 +56,20 @@ function UserManagement() {
         { role_code: 'general_worker', role_name: 'General Worker' },
         { role_code: 'inventory_controller', role_name: 'Inventory Controller' }
       ]);
+    }
+  };
+
+  const loadOrganizations = async () => {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/platform/organizations`, {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableOrganizations(data || []);
+      }
+    } catch (error) {
+      console.error('Error loading organizations:', error);
     }
   };
   
@@ -136,7 +152,8 @@ function UserManagement() {
         full_name: '',
         role: 'technician',
         roles: ['technician'],
-        password: ''
+        password: '',
+        organization_id: ''
       });
       setEditingUser(null);
       setShowForm(false);
@@ -156,7 +173,8 @@ function UserManagement() {
       full_name: user.full_name,
       role: userRoles[0] || user.role || 'technician', // Primary role for backward compatibility
       roles: userRoles, // Multiple roles
-      password: '' // Don't pre-fill password
+      password: '', // Don't pre-fill password
+      organization_id: user.organization_id || '' // Include organization_id for editing
     });
     setShowForm(true);
   };
@@ -276,7 +294,9 @@ function UserManagement() {
       email: '',
       full_name: '',
       role: 'technician',
-      password: ''
+      roles: ['technician'],
+      password: '',
+      organization_id: ''
     });
     setEditingUser(null);
     setShowForm(false);
@@ -306,7 +326,8 @@ function UserManagement() {
               full_name: '',
               role: 'technician', // For backward compatibility
               roles: ['technician'], // Default role for new users
-              password: ''
+              password: '',
+              organization_id: ''
             });
             setShowForm(true);
           }}
@@ -517,6 +538,57 @@ function UserManagement() {
                 )}
               </div>
             </div>
+
+            {/* Organization selection - only for system owners creating non-system-owner users */}
+            {(hasRole('system_owner') || isSuperAdmin()) && (
+              <div className="form-group">
+                <label>
+                  Organization {!editingUser && <span style={{ color: '#dc3545' }}>*</span>}
+                  {editingUser && <small>(Only system owners can change)</small>}
+                </label>
+                {(() => {
+                  const isCreatingSystemOwner = formData.roles?.includes('system_owner') || formData.roles?.includes('super_admin');
+                  if (isCreatingSystemOwner && !editingUser) {
+                    return (
+                      <div>
+                        <input
+                          type="text"
+                          value="Platform Level (No Organization)"
+                          disabled
+                          style={{ backgroundColor: '#f5f5f5', cursor: 'not-allowed' }}
+                        />
+                        <small className="form-text text-muted">
+                          System owners are platform-level users and don't belong to any organization.
+                        </small>
+                      </div>
+                    );
+                  }
+                  return (
+                    <select
+                      name="organization_id"
+                      value={formData.organization_id || ''}
+                      onChange={handleInputChange}
+                      required={!editingUser}
+                      disabled={editingUser && !hasRole('system_owner') && !isSuperAdmin()}
+                    >
+                      <option value="">-- Select Organization --</option>
+                      {availableOrganizations
+                        .filter(org => org.is_active !== false)
+                        .map(org => (
+                          <option key={org.id} value={org.id}>
+                            {org.name} {org.slug ? `(${org.slug})` : ''}
+                          </option>
+                        ))}
+                    </select>
+                  );
+                })()}
+                {!editingUser && formData.roles && !formData.roles.includes('system_owner') && !formData.roles.includes('super_admin') && (
+                  <small className="form-text text-muted">
+                    Users must belong to an organization to access company-specific data. This prevents data leakage.
+                  </small>
+                )}
+              </div>
+            )}
 
             <div className="form-actions">
               <button type="submit" className="btn btn-primary">

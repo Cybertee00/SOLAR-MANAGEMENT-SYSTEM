@@ -8,6 +8,8 @@ const { notifyTaskAssigned, notifyTaskFlagged, notifyOvertimeRequest } = require
 const { isOutsideWorkingHours, formatTime, getWorkingHoursDescription } = require('../utils/overtime');
 const { requireAuth, requireAdmin, requireSuperAdmin, isSuperAdmin, isAdmin } = require('../middleware/auth');
 const { validateCreateTask } = require('../middleware/inputValidation');
+const { getDb } = require('../middleware/tenantContext');
+const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
 
 module.exports = (pool) => {
   const router = express.Router();
@@ -15,6 +17,15 @@ module.exports = (pool) => {
   // Get all tasks (all authenticated users can see all tasks)
   router.get('/', requireAuth, async (req, res) => {
     try {
+      // System owners without a selected company should see no tasks
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.json([]);
+      }
+      
+      // Get organization ID from request context (for explicit filtering)
+      const { getOrganizationIdFromRequest } = require('../utils/organizationFilter');
+      const organizationId = getOrganizationIdFromRequest(req);
+      
       const { status, task_type, asset_id, completed_date } = req.query;
       
       // Use CTE to aggregate assigned_users separately to ensure all tasks are returned
@@ -57,6 +68,15 @@ module.exports = (pool) => {
       `;
       const params = [];
       let paramCount = 1;
+      
+      // Explicitly filter by organization_id (backup to RLS)
+      if (organizationId) {
+        query += ` AND t.organization_id = $${paramCount++}`;
+        params.push(organizationId);
+      } else {
+        // If no organization context, return empty (shouldn't happen due to isSystemOwnerWithoutCompany check above)
+        return res.json([]);
+      }
 
       // All users can see all tasks (no filtering by assignment)
 
@@ -83,9 +103,11 @@ module.exports = (pool) => {
       console.log(`[TASKS] User: ${req.session?.username || 'unknown'} (${req.session?.role || 'unknown'}) requesting tasks`);
       console.log(`[TASKS] Query params:`, params);
       
+      // Use req.db if available (has tenant context), otherwise fall back to pool
+      const db = getDb(req, pool);
       let result;
       try {
-        result = await pool.query(query, params);
+        result = await db.query(query, params);
       } catch (error) {
         // Check if error is due to missing pause/resume columns
         if (error.code === '42703' && error.message.includes('is_paused')) {
@@ -268,11 +290,30 @@ module.exports = (pool) => {
       const primaryAssignedTo = assignedUserIds.length > 0 ? assignedUserIds[0] : null;
       const assignedAt = assignedUserIds.length > 0 ? new Date() : null;
 
+      // Get organization_id from asset or user context
+      let organizationId = null;
+      if (asset_id) {
+        // Get organization_id from asset
+        const assetResult = await pool.query(
+          'SELECT organization_id FROM assets WHERE id = $1',
+          [asset_id]
+        );
+        if (assetResult.rows.length > 0) {
+          organizationId = assetResult.rows[0].organization_id;
+        }
+      }
+      
+      // If no organization_id from asset, get from user context
+      if (!organizationId) {
+        const { getOrganizationIdFromRequest } = require('../utils/organizationFilter');
+        organizationId = getOrganizationIdFromRequest(req);
+      }
+
       const result = await pool.query(
         `INSERT INTO tasks (
           task_code, checklist_template_id, asset_id, location, assigned_to, task_type, scheduled_date, 
-          status, hours_worked, budgeted_hours, assigned_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10) RETURNING *`,
+          status, hours_worked, budgeted_hours, assigned_at, organization_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11) RETURNING *`,
         [
           task_code, 
           checklist_template_id, 
@@ -283,7 +324,8 @@ module.exports = (pool) => {
           finalScheduledDate,
           hours_worked || 0,
           budgeted_hours || null,
-          assignedAt
+          assignedAt,
+          organizationId
         ]
       );
       
@@ -964,23 +1006,25 @@ async function generateCMTask(pool, pmTaskId, checklistTemplateId, assetId) {
     }
 
     // Create CM task with spares_used from PM (stored as JSONB in task metadata)
+    // Inherit organization_id from parent PM task
     const cmTaskResult = await pool.query(
       `INSERT INTO tasks (
         task_code, checklist_template_id, asset_id, task_type, 
-        status, parent_task_id, scheduled_date, pm_performed_by, spares_used
-      ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE, $5, $6::jsonb) RETURNING *`,
-      [taskCode, cmTemplateId, assetId, pmTaskId, pmPerformedBy, pmSparesUsed]
+        status, parent_task_id, scheduled_date, pm_performed_by, spares_used, organization_id
+      ) VALUES ($1, $2, $3, 'PCM', 'pending', $4, CURRENT_DATE, $5, $6::jsonb, $7) RETURNING *`,
+      [taskCode, cmTemplateId, assetId, pmTaskId, pmPerformedBy, pmSparesUsed, pmTask.organization_id]
     );
 
     const cmTask = cmTaskResult.rows[0];
 
     // Generate CM letter
+    // Inherit organization_id from task
     const letterNumber = `CM-LTR-${Date.now()}`;
     await pool.query(
       `INSERT INTO cm_letters (
         task_id, parent_pm_task_id, letter_number, asset_id,
-        issue_description, priority, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, 'open')`,
+        issue_description, priority, status, organization_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)`,
       [
         cmTask.id,
         pmTaskId,
@@ -988,6 +1032,7 @@ async function generateCMTask(pool, pmTaskId, checklistTemplateId, assetId) {
         assetId,
         `Corrective maintenance required due to failed PM task: ${pmTask.task_code}`,
         cmRules.default_priority || 'medium',
+        pmTask.organization_id
       ]
     );
 

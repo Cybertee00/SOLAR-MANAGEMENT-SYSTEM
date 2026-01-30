@@ -2,11 +2,103 @@
 
 **One Platform. Every Task.**
 
-SPHAiRPlatform is a professional, centralized digital O&M system designed to optimize solar power plant maintenance operations. It is asset-centric, user-friendly, backend-validated, and fully auditable, providing complete control, efficiency, and visibility over all maintenance and operational workflows.
+SPHAiRPlatform is a **multi-tenant SaaS platform** that hosts multiple companies, each with their own isolated data and customizable configurations. It is a professional, centralized digital O&M system designed to optimize solar power plant maintenance operations. The platform is asset-centric, user-friendly, backend-validated, and fully auditable, providing complete control, efficiency, and visibility over all maintenance and operational workflows.
+
+## Platform Architecture
+
+**SPHAiRPlatform is a platform that hosts companies.**
+
+### Route Structure
+
+The platform uses a dual-route architecture to separate platform-level administration from tenant-specific operations:
+
+#### `/platform/*` - Platform Routes (System Admin)
+- **Purpose**: System-wide administration and management
+- **Access**: System owners only (`system_owner` role)
+- **Data Scope**: All organizations, all users, all data (no filtering)
+- **Use Case**: Manage the entire platform without entering a specific company
+
+**Platform Routes Include:**
+- `/platform/dashboard` - Platform overview dashboard (all organizations)
+- `/platform/organizations` - Manage all organizations
+- `/platform/users` - Manage all users across all organizations
+- `/platform/system-settings` - Platform-wide settings
+- `/platform/analytics` - Cross-organization analytics
+
+#### `/tenant/*` - Tenant Routes (Company-Specific)
+- **Purpose**: Company-specific operations and data
+- **Access**: All authenticated users (filtered by their organization)
+- **Data Scope**: Only the user's organization data (RLS filtering active)
+- **Header Display**: Shows company abbreviation (e.g., "SIE" for Smart Innovations Energy)
+- **Use Case**: Day-to-day operations within a specific company
+
+**Tenant Routes Include:**
+- `/tenant/dashboard` - Company-specific dashboard
+- `/tenant/tasks` - Company tasks
+- `/tenant/inventory` - Company inventory
+- `/tenant/calendar` - Company calendar
+- `/tenant/plant` - Company plant management
+- All other operational routes
+
+### Platform Dashboard (What System Owners See Without Entering a Company)
+
+When system owners log in, they see the **Platform Dashboard** (`/platform/dashboard`) which provides:
+
+- **System Overview**:
+  - Total number of organizations
+  - Total users across all organizations
+  - Total assets across all organizations
+  - Total tasks across all organizations
+  - System health metrics
+
+- **Organization Management**:
+  - List of all organizations
+  - Quick access to organization details
+  - Organization status (active/inactive)
+  - User counts per organization
+
+- **Quick Actions**:
+  - Create new organization
+  - Manage organizations
+  - View system-wide analytics
+  - Access platform settings
+
+### Entering a Company (Deliberate Action)
+
+**"Enter Company" is a deliberate action, not default behavior.**
+
+- System owners start at the Platform Dashboard (`/platform/dashboard`)
+- To work within a specific company, they must explicitly **"Enter Company"**
+- This switches context to tenant routes (`/tenant/*`)
+- Header shows company abbreviation (e.g., "SIE")
+- All operations are scoped to that company
+- Can switch back to platform view at any time
+
+**Benefits:**
+- Clear separation between platform administration and company operations
+- Prevents accidental cross-company data access
+- Makes platform management the primary view for system owners
+- Company entry is intentional and tracked
+
+### Data Isolation Strategy
+
+**Application-Level Filtering** (Not RLS-based for system owners):
+
+- **System Owners**: 
+  - RLS is bypassed in application code
+  - Can see all data when in platform routes
+  - Filtered by organization when in tenant routes
+  - Full control over data access
+
+- **Regular Users**:
+  - RLS policies active
+  - Always filtered by their `organization_id`
+  - Cannot access other organizations' data
+  - Secure data isolation maintained
 
 ## About SPHAiRPlatform
 
-SPHAiRPlatform is the name of the whole system we are creating. For companies that subscribe to SPHAiRPlatform, they may customize the branding to their company name (e.g., "SIE Management System").
+SPHAiRPlatform is the name of the whole platform we are building. It hosts multiple companies, each with their own isolated data and configurations. Companies that subscribe to SPHAiRPlatform may customize the branding to their company name (e.g., "SIE Management System").
 
 ## Overview
 
@@ -105,17 +197,21 @@ The system displays a status indicator at the top of the screen showing:
 - **Automatic CM Generation**: Failed PM tasks automatically generate CM tasks and letters
 - **Audit Trails**: Complete tracking of who performed tasks, when, and results
 - **Task Management**: Separate pages for PM (Preventive Maintenance) and Inspection tasks
-- **Multiple Checklist Templates**: 13 pre-configured templates covering various maintenance activities
+- **Organization-Specific Templates**: Each organization has its own set of checklist templates (no shared system templates)
 
 ### Plant Management
-- **Interactive Plant Map**: Visual representation of the solar plant with tracker blocks
+- **Interactive Plant Map (Site Map)**: Visual representation of the solar plant with tracker blocks. The map title is static ("Site Map") for all organizations.
+- **Company-Scoped Map Data**: Map structure is loaded only from organization-specific files (`uploads/companies/{slug}/plant/map-structure.json`); no localStorage fallback, ensuring data isolation between tenants.
 - **Dual View Modes**: Switch between Grass Cutting and Panel Wash views
 - **Tracker Status Tracking**: Multi-select trackers and submit status requests (Done/Halfway)
-- **Admin Approval Workflow**: Tracker status changes require admin/superadmin approval
+- **Admin Approval Workflow**: Tracker status changes require admin/superadmin approval. Approvals and cycle reset both read/write map data from file first for consistency.
 - **Progress Tracking**: Real-time progress bars showing completion percentage for each work type
 - **Visual Status Indicators**: Color-coded tracker blocks (White=Not Done, Green=Done, Orange=Halfway)
+- **Map Reload**: Map refreshes automatically on tracker approval (via `trackerStatusApproved` event), when returning to the Plant page, and on window focus.
+- **Clean Button**: Resets the current cycle and clears all tracker colors to white. Visible to System Owner and Operations Administrator only (next to the progress bar).
 - **Cycle Tracking System**: Track maintenance cycles for Grass Cutting and Panel Washing
   - Cycles increment automatically when tasks reach 100% completion
+  - Cycle reset clears both grass-cutting and panel-wash colors for all trackers
   - Historical data stored with month-level detail for year-end analysis
   - Cycle reset functionality for authorized users (admin/superadmin)
   - Cycle information displayed on Plant page and included in PDF reports
@@ -165,7 +261,6 @@ The system displays a status indicator at the top of the screen showing:
   - **Idle Timeout** (45 minutes): Standard security timeout for inactive sessions
 - **Password Management**: Forced password change on first login
 - **User Profile Management**: Complete user profile and account management
-- **License Management**: System-wide license control with signed token validation (HMAC-SHA256), multi-tenant support, tier management, feature flags, and revocation mechanism
 - **Rate Limiting**: Production-grade rate limiting to prevent brute force and abuse:
   - General API: 100 requests per 15 minutes
   - Authentication: 5 login attempts per 15 minutes
@@ -371,7 +466,20 @@ For more details, see [Sphair/README.md](./Sphair/README.md).
 
 ## Checklist Templates
 
-The system includes 13 pre-configured checklist templates covering various maintenance activities:
+**Important: Multi-Tenant Template System**
+
+SPHAiRPlatform uses a **multi-tenant architecture** where **each company (organization) has its own set of checklist templates**. There are **NO shared system templates** - each organization manages and owns their templates independently.
+
+### Template Ownership
+
+- **Each organization has its own templates**: Templates are scoped to a specific organization via `organization_id`
+- **No system templates**: All templates belong to an organization - there are no global/shared templates
+- **Template isolation**: Organizations can only see and manage their own templates
+- **Template customization**: Each organization can create, modify, and delete their own templates without affecting other organizations
+
+### Default Organization
+
+The default organization "Smart Innovations Energy" includes 13 pre-configured checklist templates covering various maintenance activities:
 
 1. **CC-PM-004** - Concentrated Cabinet Inspection (Monthly)
 2. **CCTV-PM-ANNUAL** - CCTV Annual Inspection
@@ -387,7 +495,9 @@ The system includes 13 pre-configured checklist templates covering various maint
 12. **TRACKER-PM-005** - Tracker Inspection (Quarterly)
 13. **VENT-PM-009** - Ventilation Inspection (Weekly)
 
-All templates are automatically imported from Excel files in `server/templates/excel/` and can be updated using the template update script.
+**Note**: When creating a new organization, templates can be cloned from an existing organization (e.g., Smart Innovations Energy) as a starting point, but each organization maintains independent template ownership.
+
+Templates can be imported from Excel files in `server/templates/excel/` and managed through the web interface.
 
 ## Usage
 
@@ -591,7 +701,6 @@ npm run test:coverage # Run tests with coverage report
 ### Test Coverage
 
 The system includes tests for:
-- License token generation and verification
 - Error handling and custom error classes
 - Critical utility functions
 - Additional route tests (can be expanded)
@@ -606,8 +715,9 @@ After running `setup-db`, you'll have:
   - Additional roles and users can be created through the web interface
 
 - **Checklist Templates**:
-  - 13 pre-configured templates (see Checklist Templates section above)
-  - Templates are automatically imported from `server/templates/excel/`
+  - Each organization has its own templates (no shared system templates)
+  - Templates are scoped to organizations via `organization_id`
+  - Templates can be imported from Excel files or created through the web interface
   - All templates include complete checklist structures with sections and items
 
 - **RBAC System**:
@@ -662,6 +772,17 @@ cd server
 node scripts/cleanup-old-templates.js
 ```
 
+#### Plant Map: Full Tracker Reset (Wipe Approvals)
+
+To remove all tracker status requests/approvals and reset all organizations’ map trackers to white (clean state):
+
+```bash
+cd server
+node scripts/wipe-tracker-approvals.js
+```
+
+This script deletes tracker status requests and related notifications, then resets each organization’s `map-structure.json` (and database) so all trackers show white. Use for a fresh start or after testing.
+
 ### Template File Support
 
 The system supports:
@@ -678,14 +799,12 @@ SPHAiRPlatform uses a comprehensive RBAC system with six defined roles:
 - Full system control and access to all features
 - Can assign System Owner role to other users
 - Can manage all templates, users, and system settings
-- Access to license management
 
 ### Operations Administrator
 - Day-to-day operations management
 - Can create, update, and delete templates
 - Can manage users (except System Owner role assignment)
 - Full access to tasks, inventory, and reporting
-- Cannot access license management
 
 ### Supervisor
 - Task oversight and approval workflows
@@ -759,20 +878,6 @@ Consistent error responses across the API:
 - **Structured Responses**: All errors return consistent JSON format with error codes
 - **Stack Traces**: Hidden in production, visible in development
 - **Global Handler**: Centralized error handling middleware
-
-### License System
-
-Advanced license management with cryptographic security:
-
-- **Signed Tokens**: HMAC-SHA256 signed license tokens (JWT-style)
-- **Offline Validation**: Tokens can be validated without database access
-- **Multi-Tenant Support**: Company-specific licenses with `company_id` tracking
-- **Tier Management**: Small, Medium, Large, Enterprise tiers
-- **Feature Flags**: Per-license feature toggles via JSONB `features` field
-- **Revocation**: Support for license revocation with reason tracking
-- **Expiry Tracking**: Automatic expiry date management with warnings
-
-For detailed license usage, see [LICENSE_USAGE_GUIDE.md](./LICENSE_USAGE_GUIDE.md).
 
 ### Redis Requirement (Production)
 

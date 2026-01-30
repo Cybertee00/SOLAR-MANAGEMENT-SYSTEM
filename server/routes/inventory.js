@@ -1,8 +1,14 @@
 const express = require('express');
 const { requireAuth, requireAdmin, isTechnician } = require('../middleware/auth');
 const fs = require('fs');
+const path = require('path');
 const { parseInventoryFromExcel, updateActualQtyInExcel, updateInventoryItemInExcel, exportInventoryToExcel, DEFAULT_INVENTORY_XLSX } = require('../utils/inventoryExcelSync');
 const { v4: uuidv4 } = require('uuid');
+const { 
+  getOrganizationSlugFromRequest, 
+  getStoragePath, 
+  ensureCompanyDirs
+} = require('../utils/organizationStorage');
 
 module.exports = (pool) => {
   const router = express.Router();
@@ -99,6 +105,12 @@ module.exports = (pool) => {
   // List inventory items
   router.get('/items', requireAuth, async (req, res) => {
     try {
+      // System owners without a selected company should see no inventory
+      const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.json([]);
+      }
+      
       // Wrap sync in try-catch to prevent it from breaking the entire endpoint
       try {
         await ensureInventorySyncedIfNeeded();
@@ -107,19 +119,36 @@ module.exports = (pool) => {
         // Continue even if sync fails - use existing DB data
       }
       
+      // Get organization ID from request context (for explicit filtering)
+      const { getOrganizationIdFromRequest } = require('../utils/organizationFilter');
+      const organizationId = getOrganizationIdFromRequest(req);
+      
+      if (!organizationId) {
+        return res.json([]);
+      }
+      
       const lowStock = String(req.query.low_stock || '').toLowerCase() === 'true';
       const q = String(req.query.q || '').trim();
 
       const params = [];
-      let where = 'WHERE 1=1';
-      if (lowStock) where += ' AND actual_qty <= min_level';
+      let where = 'WHERE organization_id = $1';
+      params.push(organizationId);
+      let paramCount = 2;
+      
+      if (lowStock) {
+        where += ` AND actual_qty <= min_level`;
+      }
       if (q) {
         params.push(`%${q}%`);
         // Search by section number OR description OR item_code
-        where += ` AND (item_description ILIKE $${params.length} OR section ILIKE $${params.length} OR item_code ILIKE $${params.length})`;
+        where += ` AND (item_description ILIKE $${paramCount} OR section ILIKE $${paramCount} OR item_code ILIKE $${paramCount})`;
+        paramCount++;
       }
 
-      const result = await pool.query(
+      // Use req.db if available (has tenant context), otherwise fall back to pool
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+      const result = await db.query(
         `SELECT * FROM inventory_items ${where} ORDER BY section NULLS LAST, item_code`,
         params
       );
@@ -167,12 +196,26 @@ module.exports = (pool) => {
     console.log('[INVENTORY] ======================================');
     
     try {
+      // Get organization slug for file storage
+      const organizationSlug = await getOrganizationSlugFromRequest(req, pool);
+      if (organizationSlug) {
+        await ensureCompanyDirs(organizationSlug);
+      }
+
       console.log('[INVENTORY] Starting export to Excel...');
       const buffer = await exportInventoryToExcel(pool);
       console.log('[INVENTORY] Excel export successful, buffer size:', buffer.length, 'bytes');
       
-      // Set headers for file download
+      // Save to company exports folder if organization context exists
       const filename = `Inventory_Count_${new Date().toISOString().split('T')[0]}.xlsx`;
+      if (organizationSlug) {
+        const exportsDir = getStoragePath(organizationSlug, 'exports');
+        const exportPath = path.join(exportsDir, filename);
+        fs.writeFileSync(exportPath, buffer);
+        console.log('[INVENTORY] Saved export to company folder:', exportPath);
+      }
+      
+      // Set headers for file download
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.setHeader('Content-Length', buffer.length);
