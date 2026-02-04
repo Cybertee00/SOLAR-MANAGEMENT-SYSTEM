@@ -249,7 +249,7 @@ function OrganizationBranding() {
       <div className="user-management-header">
         <div>
           <Link to="/platform/organizations" className="btn btn-sm btn-secondary" style={{ marginRight: '10px', textDecoration: 'none' }}>
-            ← Back to Organizations
+            ← Back
           </Link>
           <h2 style={{ display: 'inline', marginLeft: '10px' }}>
             Organization Branding{organization && ` - ${organization.name}`}

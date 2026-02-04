@@ -740,6 +740,7 @@ export const downloadYearCalendar = async (year = null) => {
 
 // Organization API functions
 export const getCurrentOrganizationBranding = () => api.get('/organizations/current/branding');
+export const getCurrentOrganizationFeatures = () => api.get('/organizations/current/features');
 export const getOrganizationBranding = (id) => api.get(`/organizations/${id}/branding`);
 export const updateOrganizationBranding = (id, data) => api.put(`/organizations/${id}/branding`, data);
 export const uploadOrganizationLogo = async (id, file) => {

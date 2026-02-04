@@ -13,6 +13,8 @@ function OrganizationSettings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [subscriptionPlan, setSubscriptionPlan] = useState('');
+  const [userLimit, setUserLimit] = useState('');
   const [newSetting, setNewSetting] = useState({
     setting_key: '',
     setting_value: '',
@@ -54,6 +56,10 @@ function OrganizationSettings() {
 
       const data = await response.json();
       setSettings(data);
+      const subPlan = data.find(s => s.setting_key === 'subscription_plan');
+      const uLimit = data.find(s => s.setting_key === 'user_limit');
+      setSubscriptionPlan(subPlan != null && subPlan.setting_value != null ? (typeof subPlan.setting_value === 'string' ? subPlan.setting_value : String(subPlan.setting_value)) : '');
+      setUserLimit(uLimit != null && uLimit.setting_value != null ? (typeof uLimit.setting_value === 'number' ? String(uLimit.setting_value) : String(uLimit.setting_value)) : '');
     } catch (error) {
       setError('Failed to load settings: ' + getErrorMessage(error));
     } finally {
@@ -66,11 +72,16 @@ function OrganizationSettings() {
       setSaving(true);
       setError('');
 
-      const settingsToSave = settings.map(s => ({
-        setting_key: s.setting_key,
-        setting_value: typeof s.setting_value === 'string' ? JSON.parse(s.setting_value) : s.setting_value,
-        description: s.description
-      }));
+      const settingsToSave = settings
+        .filter(s => s.setting_key !== 'subscription_plan' && s.setting_key !== 'user_limit')
+        .map(s => ({
+          setting_key: s.setting_key,
+          setting_value: typeof s.setting_value === 'string' ? (() => { try { return JSON.parse(s.setting_value); } catch (_) { return s.setting_value; } })() : s.setting_value,
+          description: s.description
+        }));
+      settingsToSave.push({ setting_key: 'subscription_plan', setting_value: subscriptionPlan.trim() || null, description: 'Plan agreed with customer' });
+      const parsedLimit = userLimit.trim() ? parseInt(userLimit.trim(), 10) : null;
+      settingsToSave.push({ setting_key: 'user_limit', setting_value: (parsedLimit != null && !isNaN(parsedLimit) && parsedLimit > 0) ? parsedLimit : null, description: 'Maximum users for this organization' });
 
       const response = await fetch(`${getApiBaseUrl()}/organizations/${id}/settings`, {
         method: 'PUT',
@@ -156,7 +167,7 @@ function OrganizationSettings() {
       <div className="user-management-header">
         <div>
           <Link to="/platform/organizations" className="btn btn-sm btn-secondary" style={{ marginRight: '10px', textDecoration: 'none' }}>
-            ← Back to Organizations
+            ← Back
           </Link>
           <h2 style={{ display: 'inline', marginLeft: '10px' }}>
             Organization Settings{organization && ` - ${organization.name}`}
@@ -166,11 +177,35 @@ function OrganizationSettings() {
           className="btn btn-primary" 
           onClick={() => setShowAddForm(!showAddForm)}
         >
-          {showAddForm ? 'Cancel' : 'Add Setting'}
+          {showAddForm ? 'Cancel' : 'Add'}
         </button>
       </div>
 
       {error && <div className="error-message">{error}</div>}
+
+      <div className="user-form-container" style={{ marginBottom: '24px' }}>
+        <h3>Subscription &amp; limits</h3>
+        <p style={{ marginBottom: '12px', color: '#666', fontSize: '14px' }}>Set plan and user limit based on what you agree with the customer.</p>
+        <div className="form-group">
+          <label>Subscription plan</label>
+          <input
+            type="text"
+            value={subscriptionPlan}
+            onChange={(e) => setSubscriptionPlan(e.target.value)}
+            placeholder="e.g. Starter, Professional, Enterprise"
+          />
+        </div>
+        <div className="form-group">
+          <label>User limit</label>
+          <input
+            type="number"
+            min="1"
+            value={userLimit}
+            onChange={(e) => setUserLimit(e.target.value)}
+            placeholder="Leave empty for unlimited"
+          />
+        </div>
+      </div>
 
       {showAddForm && (
         <div className="user-form-container">
@@ -271,7 +306,7 @@ function OrganizationSettings() {
           onClick={handleSave}
           disabled={saving}
         >
-          {saving ? 'Saving...' : 'Save All Settings'}
+          {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
     </div>

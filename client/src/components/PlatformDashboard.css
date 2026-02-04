@@ -11,8 +11,8 @@
 
 .platform-dashboard-header h1 {
   margin: 0 0 8px 0;
-  font-size: 2.5rem;
-  font-weight: 700;
+  font-size: 2rem;
+  font-weight: 600;
   color: var(--md-text-dark);
 }
 

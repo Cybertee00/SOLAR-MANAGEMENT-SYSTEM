@@ -208,7 +208,7 @@ function Inventory() {
   return (
     <div>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '15px' }}>
-        <h2 style={{ margin: 0 }}>Inventory Count</h2>
+        <h2 className="page-title" style={{ margin: 0 }}>Inventory Count</h2>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: '4px', border: '1px solid var(--md-border)', borderRadius: '6px', padding: '2px' }}>
             <button

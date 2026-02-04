@@ -5,6 +5,7 @@
  */
 
 const express = require('express');
+const bcrypt = require('bcrypt');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
@@ -42,12 +43,26 @@ module.exports = (pool) => {
           id, name, slug, is_active, created_at, updated_at,
           (SELECT COUNT(*) FROM users WHERE organization_id = organizations.id) as user_count,
           (SELECT COUNT(*) FROM assets WHERE organization_id = organizations.id) as asset_count,
-          (SELECT COUNT(*) FROM tasks WHERE organization_id = organizations.id) as task_count
+          (SELECT COUNT(*) FROM tasks WHERE organization_id = organizations.id) as task_count,
+          (SELECT setting_value::text FROM organization_settings WHERE organization_id = organizations.id AND setting_key = 'user_limit' LIMIT 1) as user_limit,
+          (SELECT setting_value::text FROM organization_settings WHERE organization_id = organizations.id AND setting_key = 'subscription_plan' LIMIT 1) as subscription_plan
         FROM organizations
         ORDER BY created_at DESC
       `);
-      
-      res.json(result.rows);
+      const rows = result.rows.map(row => {
+        const r = { ...row };
+        if (r.user_limit != null) {
+          try { r.user_limit = JSON.parse(r.user_limit); } catch (_) { r.user_limit = null; }
+        }
+        if (r.subscription_plan != null) {
+          try {
+            const sp = typeof r.subscription_plan === 'string' ? JSON.parse(r.subscription_plan) : r.subscription_plan;
+            r.subscription_plan = typeof sp === 'string' ? sp : (sp && typeof sp === 'object' ? null : sp);
+          } catch (_) { r.subscription_plan = null; }
+        }
+        return r;
+      });
+      res.json(rows);
     } catch (error) {
       console.error('Error fetching organizations:', error);
       res.status(500).json({ error: 'Failed to fetch organizations' });
@@ -78,10 +93,112 @@ module.exports = (pool) => {
         return res.status(404).json({ error: 'Organization not found' });
       }
       
-      res.json(result.rows[0]);
+      const org = result.rows[0];
+      const settingsResult = await db.query(`
+        SELECT setting_key, setting_value FROM organization_settings
+        WHERE organization_id = $1 AND setting_key IN ('user_limit', 'subscription_plan')
+      `, [id]);
+      settingsResult.rows.forEach(s => {
+        try {
+          const v = typeof s.setting_value === 'string' ? JSON.parse(s.setting_value) : s.setting_value;
+          org[s.setting_key] = v;
+        } catch (_) {
+          org[s.setting_key] = s.setting_value;
+        }
+      });
+      res.json(org);
     } catch (error) {
       console.error('Error fetching organization:', error);
       res.status(500).json({ error: 'Failed to fetch organization' });
+    }
+  });
+
+  // Get current organization with limits (for tenant context: user_count, user_limit, subscription_plan)
+  router.get('/current/limits', requireAuth, async (req, res) => {
+    try {
+      const orgId = req.session.organizationId || req.tenantContext?.organizationId;
+      const isSystemOwner = req.session.roles?.includes('system_owner') || req.session.role === 'system_owner';
+      if (!orgId && !isSystemOwner) {
+        return res.status(400).json({ error: 'No organization context' });
+      }
+      const db = getDb(req, pool);
+      let targetOrgId = orgId;
+      if (isSystemOwner && req.query.organization_id) {
+        targetOrgId = req.query.organization_id;
+      }
+      if (!targetOrgId) {
+        return res.status(400).json({ error: 'Organization context required' });
+      }
+      const orgResult = await db.query(
+        'SELECT id, name, slug FROM organizations WHERE id = $1',
+        [targetOrgId]
+      );
+      if (orgResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Organization not found' });
+      }
+      const countResult = await db.query(
+        'SELECT COUNT(*) as count FROM users WHERE organization_id = $1',
+        [targetOrgId]
+      );
+      const settingsResult = await db.query(`
+        SELECT setting_key, setting_value FROM organization_settings
+        WHERE organization_id = $1 AND setting_key IN ('user_limit', 'subscription_plan')
+      `, [targetOrgId]);
+      const user_count = parseInt(countResult.rows[0].count, 10);
+      let user_limit = null;
+      let subscription_plan = null;
+      settingsResult.rows.forEach(s => {
+        try {
+          const v = typeof s.setting_value === 'string' ? JSON.parse(s.setting_value) : s.setting_value;
+          if (s.setting_key === 'user_limit') user_limit = v;
+          if (s.setting_key === 'subscription_plan') subscription_plan = v;
+        } catch (_) {}
+      });
+      res.json({
+        organization: orgResult.rows[0],
+        user_count,
+        user_limit,
+        subscription_plan
+      });
+    } catch (error) {
+      console.error('Error fetching organization limits:', error);
+      res.status(500).json({ error: 'Failed to fetch limits' });
+    }
+  });
+
+  // Get current organization enabled features (for tenant nav and route gating)
+  const GATED_FEATURE_CODES = ['plant', 'inventory', 'calendar', 'cm_letters', 'templates', 'users'];
+  router.get('/current/features', requireAuth, async (req, res) => {
+    try {
+      const orgId = req.session.organizationId || req.tenantContext?.organizationId;
+      const isSystemOwner = req.session.roles?.includes('system_owner') || req.session.role === 'system_owner';
+      if (!orgId && !isSystemOwner) {
+        return res.json({ features: {} });
+      }
+      const db = getDb(req, pool);
+      let targetOrgId = orgId;
+      if (isSystemOwner && req.query.organization_id) {
+        targetOrgId = req.query.organization_id;
+      }
+      if (!targetOrgId) {
+        return res.json({ features: {} });
+      }
+      const result = await db.query(
+        `SELECT feature_code, is_enabled FROM organization_features
+         WHERE organization_id = $1 AND feature_code = ANY($2)`,
+        [targetOrgId, GATED_FEATURE_CODES]
+      );
+      const features = {};
+      GATED_FEATURE_CODES.forEach(code => {
+        features[code] = true;
+      });
+      result.rows.forEach(row => {
+        features[row.feature_code] = row.is_enabled === true;
+      });
+      res.json({ features });
+    } catch (error) {
+      console.error('Error fetching organization features:', error);
+      res.status(500).json({ error: 'Failed to fetch features' });
     }
   });
 
@@ -95,10 +212,16 @@ module.exports = (pool) => {
         return res.status(403).json({ error: 'Only system owners can create organizations' });
       }
 
-      const { name, slug, is_active = true } = req.body;
+      const { name, slug, is_active = true, first_user: firstUser } = req.body;
       
       if (!name || !slug) {
         return res.status(400).json({ error: 'Name and slug are required' });
+      }
+      if (firstUser && (!firstUser.username || !firstUser.email || !firstUser.full_name)) {
+        return res.status(400).json({ error: 'First user requires username, email, and full_name' });
+      }
+      if (firstUser && firstUser.password && firstUser.password.length < 6) {
+        return res.status(400).json({ error: 'First user password must be at least 6 characters' });
       }
 
       const db = getDb(req, pool);
@@ -157,8 +280,45 @@ module.exports = (pool) => {
         console.error('Error initializing default branding:', brandingError);
         // Don't fail organization creation if branding initialization fails
       }
+
+      let firstUserCreated = null;
+      if (firstUser && firstUser.username && firstUser.email && firstUser.full_name) {
+        try {
+          const username = firstUser.username.trim();
+          const email = firstUser.email.trim();
+          const fullName = firstUser.full_name.trim();
+          const password = (firstUser.password && firstUser.password.trim()) ? firstUser.password.trim() : 'witkop123';
+          const passwordHash = await bcrypt.hash(password, 10);
+          const userId = uuidv4();
+          await db.query(
+            `INSERT INTO users (id, username, email, full_name, role, roles, password_hash, is_active, password_changed, organization_id)
+             VALUES ($1, $2, $3, $4, 'operations_admin', '["operations_admin"]'::jsonb, $5, true, $6, $7)`,
+            [userId, username, email, fullName, passwordHash, password === 'witkop123', orgId]
+          );
+          const roleRow = await pool.query('SELECT id FROM roles WHERE role_code = $1', ['operations_admin']);
+          if (roleRow.rows.length > 0) {
+            await pool.query(
+              `INSERT INTO user_roles (user_id, role_id, assigned_at, assigned_by)
+               VALUES ($1, $2, CURRENT_TIMESTAMP, $3)
+               ON CONFLICT (user_id, role_id) DO NOTHING`,
+              [userId, roleRow.rows[0].id, req.session.userId]
+            );
+          }
+          firstUserCreated = { id: userId, username, email, full_name: fullName };
+        } catch (userErr) {
+          console.error('Error creating first user for organization:', userErr);
+          if (userErr.code === '23505') {
+            return res.status(400).json({ error: 'First user username or email already exists' });
+          }
+          return res.status(500).json({ error: 'Failed to create first user', details: userErr.message });
+        }
+      }
       
-      res.status(201).json(result.rows[0]);
+      const responsePayload = result.rows[0];
+      if (firstUserCreated) {
+        responsePayload.first_user = firstUserCreated;
+      }
+      res.status(201).json(responsePayload);
     } catch (error) {
       console.error('Error creating organization:', error);
       res.status(500).json({ error: 'Failed to create organization' });

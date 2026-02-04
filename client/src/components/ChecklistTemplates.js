@@ -848,7 +848,7 @@ function ChecklistTemplates() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>
-          <h2>Checklist Templates</h2>
+          <h2 className="page-title">Checklist Templates</h2>
           <p style={{ marginTop: '8px', color: '#666' }}>
             View and manage all available checklist templates. Click "View" to see the complete structure.
           </p>

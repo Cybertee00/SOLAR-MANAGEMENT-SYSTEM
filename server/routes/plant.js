@@ -3,11 +3,13 @@ const path = require('path');
 const fs = require('fs');
 const { parsePlantMap } = require('../utils/plantMapParser');
 const { requireAuth, requireAdmin, isAdmin, isSuperAdmin } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/requireFeature');
 const { createNotification } = require('../utils/notifications');
 const { getCompanySubDir, getOrganizationSlugFromRequest } = require('../utils/organizationStorage');
 
 module.exports = (pool) => {
   const router = express.Router();
+  router.use(requireFeature(pool, 'plant'));
 
   /**
    * Helper function to save map structure to company-scoped file

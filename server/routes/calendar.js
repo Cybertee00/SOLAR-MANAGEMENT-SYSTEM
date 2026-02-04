@@ -1,9 +1,11 @@
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/requireFeature');
 const { generateYearCalendarExcel } = require('../utils/calendarExcelGenerator');
 
 module.exports = (pool) => {
   const router = express.Router();
+  router.use(requireFeature(pool, 'calendar'));
 
   // Get all calendar events for a date range
   router.get('/', requireAuth, async (req, res) => {

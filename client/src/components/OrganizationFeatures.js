@@ -155,7 +155,7 @@ function OrganizationFeatures() {
       <div className="user-management-header">
         <div>
           <Link to="/platform/organizations" className="btn btn-sm btn-secondary" style={{ marginRight: '10px', textDecoration: 'none' }}>
-            ← Back to Organizations
+            ← Back
           </Link>
           <h2 style={{ display: 'inline', marginLeft: '10px' }}>
             Organization Features{organization && ` - ${organization.name}`}
@@ -165,7 +165,7 @@ function OrganizationFeatures() {
           className="btn btn-primary" 
           onClick={() => setShowAddForm(!showAddForm)}
         >
-          {showAddForm ? 'Cancel' : 'Add Feature'}
+          {showAddForm ? 'Cancel' : 'Add'}
         </button>
       </div>
 
@@ -270,7 +270,7 @@ function OrganizationFeatures() {
           onClick={handleSave}
           disabled={saving}
         >
-          {saving ? 'Saving...' : 'Save All Features'}
+          {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
     </div>

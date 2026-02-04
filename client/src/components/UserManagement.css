@@ -9,6 +9,8 @@
 
 .page-header h1 {
   margin: 0;
+  font-size: 2rem;
+  font-weight: 600;
 }
 
 /* Add User Button - Reduced size */
@@ -307,6 +309,14 @@
   z-index: 1000;
   min-width: 120px;
   overflow: hidden;
+}
+
+/* Last row: open dropdown upward so it is fully visible */
+.org-menu-dropdown-up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
 }
 
 .org-menu-item {
@@ -696,7 +706,7 @@
 .modal-header h2 {
   margin: 0;
   color: #d32f2f;
-  font-size: 24px;
+  font-size: 1.25rem;
 }
 
 .modal-body {
@@ -848,8 +858,9 @@
 
 .user-management-header h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 2rem;
   font-weight: 600;
+  color: var(--md-text-dark);
 }
 
 .user-form-container {
@@ -872,6 +883,14 @@
   border-radius: 6px;
   overflow: hidden;
   margin-top: 8px;
+}
+
+/* Organizations page: no card background so 3-dot dropdown is fully visible */
+.org-management-page .users-table-container {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
 }
 
 .error-message {
@@ -901,7 +920,7 @@
   }
   
   .user-management-header h2 {
-    font-size: 18px;
+    font-size: 2rem;
   }
   
   .user-form-container {

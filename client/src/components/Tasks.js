@@ -148,7 +148,7 @@ function Tasks() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <h2 style={{ marginBottom: 0 }}>PM Tasks</h2>
+        <h2 className="page-title" style={{ marginBottom: 0 }}>PM Tasks</h2>
         {isAdmin() && (
           <button className="btn btn-sm btn-primary" onClick={() => setShowCreateForm(!showCreateForm)} style={{ padding: '8px 16px', fontSize: '13px' }}>
             {showCreateForm ? 'Cancel' : 'New'}

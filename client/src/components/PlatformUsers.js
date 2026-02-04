@@ -26,7 +26,7 @@ function PlatformUsers() {
   });
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState({
-    role: '',
+    role: 'operations_admin',
     organization_id: '',
     status: '',
     last_login: ''
@@ -407,7 +407,7 @@ function PlatformUsers() {
             exportUsers();
           }}
         >
-          Export Users
+          Export
         </button>
       </div>
 
@@ -738,7 +738,7 @@ function PlatformUsers() {
                                     navigate(`/tenant/users`);
                                   }}
                                 >
-                                  Edit User
+                                  Edit
                                 </button>
                                 <button
                                   className="btn btn-secondary btn-sm"
@@ -747,7 +747,7 @@ function PlatformUsers() {
                                     navigate(`/tenant/tasks`);
                                   }}
                                 >
-                                  View Tasks
+                                  Tasks
                                 </button>
                               </div>
                             </div>

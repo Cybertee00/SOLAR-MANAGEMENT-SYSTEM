@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const { requireFeature } = require('../middleware/requireFeature');
 const { generateFaultLogExcel } = require('../utils/faultLogGenerator');
 const { 
   getOrganizationSlugFromRequest, 
@@ -12,6 +13,7 @@ const {
 
 module.exports = (pool) => {
   const router = express.Router();
+  router.use(requireFeature(pool, 'cm_letters'));
 
   // Get all CM letters
   router.get('/', async (req, res) => {

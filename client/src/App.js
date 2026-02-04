@@ -35,6 +35,8 @@ import InactivityWarningModal from './components/InactivityWarningModal';
 import FeedbackWidget from './components/FeedbackWidget';
 import { useInactivityTimeout } from './hooks/useInactivityTimeout';
 import { usePageTitle } from './hooks/usePageTitle';
+import { OrganizationFeaturesProvider, useOrganizationFeatures } from './context/OrganizationFeaturesContext';
+import FeatureGate from './components/FeatureGate';
 import syncManager from './utils/syncManager';
 import { loadAndApplyCompanyColors, resetCompanyColors } from './utils/companyColors';
 import './App.css';
@@ -43,9 +45,11 @@ function App() {
   return (
     <AuthProvider>
       <Router>
-        <div className="App">
-          <AppContent />
-        </div>
+        <OrganizationFeaturesProvider>
+          <div className="App">
+            <AppContent />
+          </div>
+        </OrganizationFeaturesProvider>
       </Router>
     </AuthProvider>
   );
@@ -303,7 +307,9 @@ function AppContent() {
             path="/tenant/checklist-templates" 
             element={
               <ProtectedRoute requireAdmin={true}>
-                <ChecklistTemplates />
+                <FeatureGate feature="templates">
+                  <ChecklistTemplates />
+                </FeatureGate>
               </ProtectedRoute>
             } 
           />
@@ -311,7 +317,9 @@ function AppContent() {
             path="/tenant/cm-letters" 
             element={
               <ProtectedRoute>
-                <CMLetters />
+                <FeatureGate feature="cm_letters">
+                  <CMLetters />
+                </FeatureGate>
               </ProtectedRoute>
             } 
           />
@@ -319,7 +327,9 @@ function AppContent() {
             path="/tenant/inventory"
             element={
               <ProtectedRoute>
-                <Inventory />
+                <FeatureGate feature="inventory">
+                  <Inventory />
+                </FeatureGate>
               </ProtectedRoute>
             }
           />
@@ -327,7 +337,9 @@ function AppContent() {
             path="/tenant/users" 
             element={
               <ProtectedRoute requireAdmin={true}>
-                <UserManagement />
+                <FeatureGate feature="users">
+                  <UserManagement />
+                </FeatureGate>
               </ProtectedRoute>
             } 
           />
@@ -351,7 +363,9 @@ function AppContent() {
             path="/tenant/calendar" 
             element={
               <ProtectedRoute>
-                <Calendar />
+                <FeatureGate feature="calendar">
+                  <Calendar />
+                </FeatureGate>
               </ProtectedRoute>
             } 
           />
@@ -368,7 +382,9 @@ function AppContent() {
             path="/tenant/plant" 
             element={
               <ProtectedRoute>
-                <Plant />
+                <FeatureGate feature="plant">
+                  <Plant />
+                </FeatureGate>
               </ProtectedRoute>
             } 
           />
@@ -454,6 +470,7 @@ function Header() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout, isAdmin, isSuperAdmin, isTechnician, hasRole } = useAuth();
+  const { hasFeature } = useOrganizationFeatures();
   const [tasksDropdownOpen, setTasksDropdownOpen] = useState(false);
   const [tasksDropdownTimeout, setTasksDropdownTimeout] = useState(null);
   const [selectedOrgName, setSelectedOrgName] = useState(null);
@@ -725,8 +742,8 @@ function Header() {
           )}
         </div>
         {(() => {
-          // Hide Templates for GENERAL_WORKER, TECHNICIAN, Inventory Controller, and SUPERVISOR
-          const canViewTemplates = !hasRole('general_worker') && 
+          // Hide Templates for GENERAL_WORKER, TECHNICIAN, Inventory Controller, and SUPERVISOR; also gate by feature
+          const canViewTemplates = hasFeature('templates') && !hasRole('general_worker') && 
                                    !hasRole('technician') && 
                                    !hasRole('inventory_controller') && 
                                    !hasRole('supervisor');
@@ -736,19 +753,27 @@ function Header() {
             </Link>
           );
         })()}
-        <Link to="/tenant/cm-letters" className={location.pathname === '/tenant/cm-letters' ? 'active' : ''}>
-          CM Letters
-        </Link>
-        <Link to="/tenant/inventory" className={location.pathname === '/tenant/inventory' ? 'active' : ''}>
-          Inventory
-        </Link>
-        <Link to="/tenant/calendar" className={location.pathname === '/tenant/calendar' ? 'active' : ''}>
-          Calendar
-        </Link>
-        <Link to="/tenant/plant" className={location.pathname === '/tenant/plant' ? 'active' : ''}>
-          Plant
-        </Link>
-        {isAdmin() && (
+        {hasFeature('cm_letters') && (
+          <Link to="/tenant/cm-letters" className={location.pathname === '/tenant/cm-letters' ? 'active' : ''}>
+            CM Letters
+          </Link>
+        )}
+        {hasFeature('inventory') && (
+          <Link to="/tenant/inventory" className={location.pathname === '/tenant/inventory' ? 'active' : ''}>
+            Inventory
+          </Link>
+        )}
+        {hasFeature('calendar') && (
+          <Link to="/tenant/calendar" className={location.pathname === '/tenant/calendar' ? 'active' : ''}>
+            Calendar
+          </Link>
+        )}
+        {hasFeature('plant') && (
+          <Link to="/tenant/plant" className={location.pathname === '/tenant/plant' ? 'active' : ''}>
+            Plant
+          </Link>
+        )}
+        {isAdmin() && hasFeature('users') && (
           <Link to="/tenant/users" className={location.pathname === '/tenant/users' ? 'active' : ''}>
             Users
           </Link>

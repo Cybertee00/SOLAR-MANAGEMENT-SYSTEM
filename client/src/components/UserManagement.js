@@ -32,14 +32,28 @@ function UserManagement() {
   });
   const editRolesFormRef = useRef(null); // Ref for the edit roles form section
   const [showRoleDescriptions, setShowRoleDescriptions] = useState(false);
+  const [orgLimits, setOrgLimits] = useState({ user_count: 0, user_limit: null });
   const usersPerPage = 4;
 
   useEffect(() => {
-    if (isAdmin()) {
+    if (currentUser && isAdmin()) {
       loadUsers();
       loadRoles();
+      loadOrgLimits();
     }
-  }, [isAdmin]);
+  }, [currentUser?.id, isAdmin]);
+
+  const loadOrgLimits = async () => {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/organizations/current/limits`, { credentials: 'include' });
+      if (response.ok) {
+        const data = await response.json();
+        setOrgLimits({ user_count: data.user_count ?? 0, user_limit: data.user_limit ?? null });
+      }
+    } catch (err) {
+      console.error('Error loading org limits:', err);
+    }
+  };
   
   const loadRoles = async () => {
     try {
@@ -158,6 +172,7 @@ function UserManagement() {
       setEditingUser(null);
       setShowForm(false);
       loadUsers();
+      loadOrgLimits();
     } catch (error) {
       setError(getErrorMessage(error, 'Failed to save user'));
     }
@@ -312,28 +327,38 @@ function UserManagement() {
     );
   }
 
+  const atUserLimit = orgLimits.user_limit != null && orgLimits.user_count >= orgLimits.user_limit;
+  const usersLimitText = orgLimits.user_limit != null
+    ? `Users: ${orgLimits.user_count} / ${orgLimits.user_limit}`
+    : `Users: ${orgLimits.user_count}`;
+
   return (
     <div className="container">
       <div className="page-header">
         <h1>User Management</h1>
-        <button 
-          className="btn btn-primary add-user-btn"
-          onClick={() => {
-            setEditingUser(null);
-            setFormData({
-              username: '',
-              email: '',
-              full_name: '',
-              role: 'technician', // For backward compatibility
-              roles: ['technician'], // Default role for new users
-              password: '',
-              organization_id: ''
-            });
-            setShowForm(true);
-          }}
-        >
-          + Add
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '14px', color: '#666' }}>{usersLimitText}</span>
+          <button 
+            className="btn btn-primary add-user-btn"
+            disabled={atUserLimit}
+            title={atUserLimit ? 'User limit reached. Contact your administrator to increase the limit.' : ''}
+            onClick={() => {
+              setEditingUser(null);
+              setFormData({
+                username: '',
+                email: '',
+                full_name: '',
+                role: 'technician', // For backward compatibility
+                roles: ['technician'], // Default role for new users
+                password: '',
+                organization_id: ''
+              });
+              setShowForm(true);
+            }}
+          >
+            + Add
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -350,13 +375,7 @@ function UserManagement() {
               <label>Roles * <small>(Select one or more roles)</small></label>
               <div className="roles-checkboxes">
                 {availableRoles
-                  .filter(role => {
-                    // Only system_owner can see and assign system_owner role
-                    if (role.role_code === 'system_owner') {
-                      return hasRole('system_owner') || isSuperAdmin();
-                    }
-                    return true;
-                  })
+                  .filter(role => role.role_code !== 'system_owner' && role.role_code !== 'super_admin')
                   .map(role => (
                   <label key={role.role_code} className="role-checkbox">
                     <input
@@ -411,7 +430,7 @@ function UserManagement() {
 
       {showForm && (
         <div className="card form-card">
-          <h2>{editingUser ? 'Edit User' : 'New User'}</h2>
+          <h2>{editingUser ? 'Edit' : 'New User'}</h2>
           <form onSubmit={handleSubmit}>
             <div className="form-row">
               <div className="form-group">
@@ -636,19 +655,6 @@ function UserManagement() {
                 Role Access Permissions:
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
-                {(hasRole('system_owner') || isSuperAdmin()) && (
-                  <div>
-                    <strong style={{ color: '#9c27b0' }}>System Owner</strong>
-                    <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px', color: '#555' }}>
-                      <li>Full system access and control</li>
-                      <li>Can manage all users and roles</li>
-                      <li>Can access all pages and features</li>
-                      <li>Can upload, create, edit, delete checklist templates</li>
-                      <li>Can assign system_owner role</li>
-                      <li>Bypasses all permission checks</li>
-                    </ul>
-                  </div>
-                )}
                 <div>
                   <strong style={{ color: '#dc3545' }}>Operations Administrator</strong>
                   <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px', color: '#555' }}>

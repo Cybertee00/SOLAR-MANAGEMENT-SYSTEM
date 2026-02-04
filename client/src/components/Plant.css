@@ -10,8 +10,9 @@
 
 .plant-header h1 {
   margin: 0 0 5px 0;
-  color: #333;
-  font-size: 18px;
+  color: var(--md-text-dark);
+  font-size: 2rem;
+  font-weight: 600;
 }
 
 .plant-controls {

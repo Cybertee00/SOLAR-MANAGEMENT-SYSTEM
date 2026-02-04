@@ -6,11 +6,13 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { requireAuth, requirePasswordChange, requireAdmin, requireSuperAdmin, isSuperAdmin } = require('../middleware/auth');
 const { validateCreateUser, validateUpdateUser } = require('../middleware/inputValidation');
+const { requireFeature } = require('../middleware/requireFeature');
 // Rate limiting removed for frequent use
 // const { sensitiveOperationLimiter } = require('../middleware/rateLimiter');
 
 module.exports = (pool) => {
   const router = express.Router();
+  router.use(requireFeature(pool, 'users'));
 
   // Helper function to check if roles column exists (cached)
   let rolesColumnExists = null;
@@ -108,51 +110,9 @@ module.exports = (pool) => {
       const { getDb } = require('../middleware/tenantContext');
       const db = getDb(req, pool);
       
-      // System owners without a selected company should only see system owners
+      // System owners without a selected company: tenant User Management shows no users (company users only)
       if (isSystemOwnerWithoutCompany(req)) {
-        // Only return system owners when no company is selected
-        
-        const rbacCheck = await db.query(`
-          SELECT table_name 
-          FROM information_schema.tables 
-          WHERE table_schema = 'public' AND table_name = 'user_roles'
-        `);
-        const hasRBAC = rbacCheck.rows.length > 0;
-        
-        if (hasRBAC) {
-          const result = await db.query(`
-            SELECT 
-              u.id, u.username, u.email, u.full_name, u.role,
-              COALESCE(
-                (SELECT jsonb_agg(r.role_code ORDER BY r.role_code)
-                 FROM user_roles ur
-                 JOIN roles r ON ur.role_id = r.id
-                 WHERE ur.user_id = u.id),
-                COALESCE(u.roles, jsonb_build_array(u.role), '["technician"]'::jsonb)
-              ) as roles,
-              u.profile_image, u.is_active, u.created_at, u.last_login
-            FROM users u
-            WHERE u.id IN (
-              SELECT DISTINCT ur.user_id
-              FROM user_roles ur
-              JOIN roles r ON ur.role_id = r.id
-              WHERE r.role_code = 'system_owner'
-            )
-            OR u.role = 'system_owner' OR u.role = 'super_admin'
-            ORDER BY u.created_at DESC
-          `);
-          return res.json(result.rows);
-        } else {
-          const result = await db.query(`
-            SELECT id, username, email, full_name, role,
-                   COALESCE(roles, jsonb_build_array(role)) as roles,
-                   profile_image, is_active, created_at, last_login 
-            FROM users 
-            WHERE role = 'system_owner' OR role = 'super_admin'
-            ORDER BY created_at DESC
-          `);
-          return res.json(result.rows);
-        }
+        return res.json([]);
       }
       
       // Check if RBAC tables exist (db already defined above)
@@ -166,13 +126,13 @@ module.exports = (pool) => {
       const hasRolesColumn = await checkRolesColumn();
 
       // PERMANENT SOLUTION: Filter users by organization
-      // - If organizationId exists: Show company users + system owners
+      // - If organizationId exists: Show ONLY company users (no system owners) - same for System Owner and Operations Admin
       // - If no organizationId: Already handled above (system owners only)
       let query;
       if (hasRBAC) {
         // Use RBAC system - get roles from user_roles table
         if (isSystemOwner && organizationId) {
-          // System owner with company selected: Show company users + system owners
+          // System owner with company selected: Show ONLY this company's users (exclude system owners)
           query = `
             SELECT 
               u.id, u.username, u.email, u.full_name, u.role,
@@ -186,13 +146,13 @@ module.exports = (pool) => {
               u.profile_image, u.is_active, u.created_at, u.last_login
             FROM users u
             WHERE u.organization_id = $1
-               OR u.id IN (
-                 SELECT DISTINCT ur.user_id
-                 FROM user_roles ur
-                 JOIN roles r ON ur.role_id = r.id
-                 WHERE r.role_code = 'system_owner'
-               )
-               OR u.role = 'system_owner' OR u.role = 'super_admin'
+              AND u.id NOT IN (
+                SELECT DISTINCT ur.user_id
+                FROM user_roles ur
+                JOIN roles r ON ur.role_id = r.id
+                WHERE r.role_code = 'system_owner'
+              )
+              AND (u.role != 'system_owner' AND u.role != 'super_admin')
             ORDER BY u.created_at DESC
           `;
         } else if (isSystemOwner && !organizationId) {
@@ -275,13 +235,13 @@ module.exports = (pool) => {
         }
       } else {
         if (isSystemOwner && organizationId) {
-          // System owner with company: Show company users + system owners
+          // System owner with company: Show ONLY this company's users (exclude system owners)
           query = `SELECT id, username, email, full_name, role,
                           jsonb_build_array(role) as roles,
                           profile_image, is_active, created_at, last_login 
                    FROM users 
                    WHERE organization_id = $1
-                      OR role = 'system_owner' OR role = 'super_admin'
+                     AND role != 'system_owner' AND role != 'super_admin'
                    ORDER BY created_at DESC`;
         } else if (isSystemOwner && !organizationId) {
           // System owner without company: Only system owners
@@ -605,7 +565,30 @@ module.exports = (pool) => {
       if (mappedRoles.includes('system_owner') && !isSystemOwner) {
         return res.status(403).json({ error: 'Only system owner can assign system_owner role' });
       }
-      
+
+      // Enforce organization user limit (stored in organization_settings as user_limit)
+      if (userOrganizationId) {
+        const limitRow = await db.query(
+          'SELECT setting_value FROM organization_settings WHERE organization_id = $1 AND setting_key = $2',
+          [userOrganizationId, 'user_limit']
+        );
+        const limitVal = limitRow.rows[0]?.setting_value;
+        const userLimit = limitVal != null ? (typeof limitVal === 'number' ? limitVal : parseInt(limitVal, 10)) : null;
+        if (userLimit != null && !isNaN(userLimit) && userLimit > 0) {
+          const countRow = await db.query(
+            'SELECT COUNT(*) as count FROM users WHERE organization_id = $1',
+            [userOrganizationId]
+          );
+          const currentCount = parseInt(countRow.rows[0].count, 10);
+          if (currentCount >= userLimit) {
+            return res.status(403).json({
+              error: 'User limit reached',
+              message: `This organization has reached its user limit (${currentCount}/${userLimit}). Contact your administrator to increase the limit.`
+            });
+          }
+        }
+      }
+
       // Check if RBAC tables exist
       const rbacCheck = await pool.query(`
         SELECT table_name 

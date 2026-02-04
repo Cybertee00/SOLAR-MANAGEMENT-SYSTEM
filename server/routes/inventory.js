@@ -1,5 +1,6 @@
 const express = require('express');
 const { requireAuth, requireAdmin, isTechnician } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/requireFeature');
 const fs = require('fs');
 const path = require('path');
 const { parseInventoryFromExcel, updateActualQtyInExcel, updateInventoryItemInExcel, exportInventoryToExcel, DEFAULT_INVENTORY_XLSX } = require('../utils/inventoryExcelSync');
@@ -12,6 +13,7 @@ const {
 
 module.exports = (pool) => {
   const router = express.Router();
+  router.use(requireFeature(pool, 'inventory'));
   
   console.log('[INVENTORY] Inventory routes module loaded');
   console.log('[INVENTORY] Registering routes...');

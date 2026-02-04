@@ -326,6 +326,8 @@ This will install dependencies for the root, server, and client.
 
 ### 2. Database Setup
 
+**Moving to another PC?** See [docs/SETUP_POSTGRES_OTHER_PC.md](docs/SETUP_POSTGRES_OTHER_PC.md) for PostgreSQL setup and run steps on a new machine.
+
 1. Make sure PostgreSQL is running on your system
 2. Update database credentials in `server/.env`:
    ```

@@ -248,7 +248,7 @@ function CMLetters() {
   return (
     <div>
       <div style={{ marginBottom: '20px' }}>
-        <h2 style={{ margin: '0 0 20px 0' }}>Corrective Maintenance Letters</h2>
+        <h2 className="page-title" style={{ margin: '0 0 20px 0' }}>Corrective Maintenance Letters</h2>
         
         {/* Filters Section */}
         <div className="card" style={{ marginBottom: '20px' }}>

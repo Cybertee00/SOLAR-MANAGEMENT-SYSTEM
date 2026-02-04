@@ -118,6 +118,12 @@ function OrganizationManagement() {
     slug: '',
     is_active: true
   });
+  const [firstUser, setFirstUser] = useState({
+    username: '',
+    email: '',
+    full_name: '',
+    password: ''
+  });
 
   useEffect(() => {
     loadOrganizations();
@@ -175,14 +181,28 @@ function OrganizationManagement() {
         : `${getApiBaseUrl()}/organizations`;
       
       const method = editingOrg ? 'PUT' : 'POST';
-      
+      const body = editingOrg
+        ? formData
+        : {
+            ...formData,
+            first_user:
+              firstUser.username?.trim() && firstUser.email?.trim() && firstUser.full_name?.trim()
+                ? {
+                    username: firstUser.username.trim(),
+                    email: firstUser.email.trim(),
+                    full_name: firstUser.full_name.trim(),
+                    password: firstUser.password?.trim() || undefined
+                  }
+                : undefined
+          };
+
       const response = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json'
         },
         credentials: 'include',
-        body: JSON.stringify(formData)
+        body: JSON.stringify(body)
       });
 
       if (!response.ok) {
@@ -281,6 +301,7 @@ function OrganizationManagement() {
       slug: '',
       is_active: true
     });
+    setFirstUser({ username: '', email: '', full_name: '', password: '' });
     setError('');
   };
 
@@ -334,6 +355,49 @@ function OrganizationManagement() {
               />
             </div>
 
+            {!editingOrg && (
+              <div style={{ borderTop: '1px solid #eee', paddingTop: '16px', marginTop: '16px' }}>
+                <h4 style={{ marginBottom: '8px' }}>First admin user (optional)</h4>
+                <p style={{ fontSize: '13px', color: '#666', marginBottom: '12px' }}>Create an Operations Administrator for this organization so they can log in and add others.</p>
+                <div className="form-group">
+                  <label>Username</label>
+                  <input
+                    type="text"
+                    value={firstUser.username}
+                    onChange={(e) => setFirstUser(prev => ({ ...prev, username: e.target.value }))}
+                    placeholder="Username for first admin"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    value={firstUser.email}
+                    onChange={(e) => setFirstUser(prev => ({ ...prev, email: e.target.value }))}
+                    placeholder="Email for first admin"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Full name</label>
+                  <input
+                    type="text"
+                    value={firstUser.full_name}
+                    onChange={(e) => setFirstUser(prev => ({ ...prev, full_name: e.target.value }))}
+                    placeholder="Full name"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Password (optional)</label>
+                  <input
+                    type="password"
+                    value={firstUser.password}
+                    onChange={(e) => setFirstUser(prev => ({ ...prev, password: e.target.value }))}
+                    placeholder="Min 6 characters, or default will be used"
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="form-group">
               <label>
                 <input
@@ -364,6 +428,7 @@ function OrganizationManagement() {
             <tr>
               <th>Name</th>
               <th>Slug</th>
+              <th>Plan</th>
               <th>Users</th>
               <th>Assets</th>
               <th>Tasks</th>
@@ -375,14 +440,15 @@ function OrganizationManagement() {
           <tbody>
             {organizations.length === 0 ? (
               <tr>
-                <td colSpan="8" className="no-data">No organizations found</td>
+                <td colSpan="9" className="no-data">No organizations found</td>
               </tr>
             ) : (
               organizations.map(org => (
                 <tr key={org.id}>
                   <td>{org.name}</td>
                   <td>{org.slug}</td>
-                  <td>{org.user_count || 0}</td>
+                  <td>{org.subscription_plan || '-'}</td>
+                  <td>{org.user_limit != null ? `${org.user_count || 0} / ${org.user_limit}` : (org.user_count || 0)}</td>
                   <td>{org.asset_count || 0}</td>
                   <td>{org.task_count || 0}</td>
                   <td>
@@ -411,7 +477,7 @@ function OrganizationManagement() {
                           ⋯
                         </button>
                         {openMenuId === org.id && (
-                          <div className="org-menu-dropdown">
+                          <div className={`org-menu-dropdown ${organizations.indexOf(org) === organizations.length - 1 ? 'org-menu-dropdown-up' : ''}`}>
                             <Link 
                               to={`/platform/organizations/${org.id}/settings`}
                               className="org-menu-item"
@@ -420,7 +486,7 @@ function OrganizationManagement() {
                               Settings
                             </Link>
                             <Link 
-                              to={`/organizations/${org.id}/features`}
+                              to={`/platform/organizations/${org.id}/features`}
                               className="org-menu-item"
                               onClick={() => setOpenMenuId(null)}
                             >

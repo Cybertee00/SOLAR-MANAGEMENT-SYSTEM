@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbac');
+const { requireFeature } = require('../middleware/requireFeature');
 const { 
   getOrganizationSlugFromRequest, 
   getStoragePath, 
@@ -12,6 +13,8 @@ const {
 } = require('../utils/organizationStorage');
 
 module.exports = (pool) => {
+  const router = express.Router();
+  router.use(requireFeature(pool, 'templates'));
   // Configure multer for file uploads (company-scoped by slug)
   const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
@@ -50,8 +53,6 @@ module.exports = (pool) => {
       }
     }
   });
-
-  const router = express.Router();
 
   // Get all checklist templates
   router.get('/', async (req, res) => {

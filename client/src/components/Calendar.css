@@ -16,7 +16,8 @@
 .calendar-header h1 {
   margin: 0;
   color: #2c3e50;
-  font-size: 28px;
+  font-size: 2rem;
+  font-weight: 600;
 }
 
 .calendar-controls {
@@ -343,7 +344,7 @@
   }
 
   .calendar-header h1 {
-    font-size: 22px;
+    font-size: 2rem;
     margin-bottom: 0;
   }
 
@@ -501,7 +502,7 @@
   }
 
   .calendar-header h1 {
-    font-size: 18px;
+    font-size: 2rem;
   }
 
   .calendar-controls {

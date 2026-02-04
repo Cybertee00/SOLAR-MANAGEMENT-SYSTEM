@@ -8,7 +8,6 @@ import {
   getInventoryItems 
 } from '../api/api';
 import './Dashboard.css';
-import sieLogo from '../assets/SIE_logo.png';
 import { getApiBaseUrl } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { hasOrganizationContext, isSystemOwnerWithoutCompany, getCurrentOrganizationSlug } from '../utils/organizationContext';
@@ -790,9 +789,11 @@ function Dashboard() {
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        {companyLogo && (
-          <img src={companyLogo} alt="Company Logo" className="dashboard-logo" />
-        )}
+        <div className="dashboard-header-logo-slot">
+          {companyLogo && (
+            <img src={companyLogo} alt="Company Logo" className="dashboard-logo" />
+          )}
+        </div>
         <h2 className="dashboard-title">Dashboard</h2>
       </div>
       

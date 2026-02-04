@@ -672,7 +672,7 @@ function Plant() {
       
       {/* Header */}
       <div style={{ width: '100%', maxWidth: '1200px', marginBottom: '10px' }}>
-        <h2 style={{ margin: '0 0 10px 0', textAlign: 'center' }}>{siteMapName}</h2>
+        <h2 className="page-title" style={{ margin: '0 0 10px 0', textAlign: 'center' }}>{siteMapName}</h2>
         
         {/* Controls */}
         <div style={{ 
