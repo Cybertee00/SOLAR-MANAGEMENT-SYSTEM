@@ -172,15 +172,125 @@ npm run dev
 
 ---
 
-## 8. If You Need to Move Data from This PC
+## 8. Moving Data from This PC to the Other PC
 
-- **Option A — Dump/restore**
-  - On this PC: `pg_dump -U postgres -d solar_om_db -F c -f solar_om_db.backup`
-  - Copy `solar_om_db.backup` to the other PC.
-  - On the other PC (after creating an empty `solar_om_db` or dropping it and recreating):  
-    `pg_restore -U postgres -d solar_om_db solar_om_db.backup`
+### Option A: Move All Data (Recommended)
 
-- **Option B — Fresh setup**
-  - On the other PC, use only `npm run setup-db` (no dump). You get a clean DB with seed data; no data from this PC.
+**On THIS PC (current machine):**
 
-Use Option A when you need to keep existing organizations, users, and tasks. Use Option B for a clean dev/test copy.
+1. **Create a database dump:**
+
+   **Option 1 — Using PowerShell script:**
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\dump-database.ps1
+   ```
+   
+   **Option 2 — Using Node.js script (if pg_dump is in PATH):**
+   ```bash
+   node scripts/dump-database.js
+   ```
+   
+   **Option 2 — Manual command (if script doesn't work):**
+   
+   Open PowerShell or Command Prompt and run:
+   ```powershell
+   # Set password (replace 0000 with your actual postgres password)
+   $env:PGPASSWORD="0000"
+   
+   # Create dump (adjust path/date format as needed)
+   pg_dump -h localhost -p 5432 -U postgres -d solar_om_db -F c -f "scripts\database-dump\solar_om_db_backup.backup"
+   ```
+   
+   Or if `pg_dump` is not in PATH, use full path:
+   ```powershell
+   & "C:\Program Files\PostgreSQL\16\bin\pg_dump.exe" -h localhost -p 5432 -U postgres -d solar_om_db -F c -f "scripts\database-dump\solar_om_db_backup.backup"
+   ```
+   (Replace `16` with your PostgreSQL version number)
+   
+   This creates a compressed backup file in `scripts/database-dump/`, e.g.:
+   ```
+   scripts/database-dump/solar_om_db_backup.backup
+   ```
+
+2. **Copy the dump file to the other PC:**
+   - Copy the `.backup` file via USB drive, network share, cloud storage, etc.
+   - Note the full path where you'll save it on the other PC.
+
+**On the OTHER PC:**
+
+1. **Install PostgreSQL and set up the project** (follow steps 2-4 above).
+
+2. **Place the dump file** in the project (e.g., `scripts/database-dump/` folder).
+
+3. **Restore the database:**
+
+   **Option 1 — Using the script:**
+   ```bash
+   node scripts/restore-database.js scripts/database-dump/solar_om_db_backup.backup
+   ```
+   
+   **Option 2 — Manual commands (if script doesn't work):**
+   
+   Open PowerShell or Command Prompt:
+   ```powershell
+   # Set password
+   $env:PGPASSWORD="YOUR_POSTGRES_PASSWORD"
+   
+   # Drop and recreate the database
+   psql -U postgres -c "DROP DATABASE IF EXISTS solar_om_db;"
+   psql -U postgres -c "CREATE DATABASE solar_om_db;"
+   
+   # Restore the dump
+   pg_restore -U postgres -d solar_om_db scripts/database-dump/solar_om_db_backup.backup
+   ```
+   
+   Or use full paths if tools aren't in PATH:
+   ```powershell
+   & "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -c "DROP DATABASE IF EXISTS solar_om_db;"
+   & "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -c "CREATE DATABASE solar_om_db;"
+   & "C:\Program Files\PostgreSQL\16\bin\pg_restore.exe" -U postgres -d solar_om_db scripts/database-dump/solar_om_db_backup.backup
+   ```
+
+4. **Start the application:**
+   ```bash
+   npm run dev
+   ```
+
+✅ **Result:** All your organizations, users, tasks, inventory, calendar events, and other data will be available on the other PC.
+
+---
+
+### Option B: Fresh Setup (No Data Migration)
+
+If you don't need to move existing data:
+
+**On the OTHER PC:**
+
+1. Follow steps 2-4 above (install PostgreSQL, clone code, create `.env`).
+2. Run `npm run setup-db` — this creates a fresh database with seed data only.
+3. Run `npm run dev`.
+
+✅ **Result:** Clean database with default seed data (default org, admin user, templates). No data from this PC.
+
+---
+
+### Manual Dump/Restore (Alternative)
+
+If the scripts don't work, you can use PostgreSQL commands directly:
+
+**On THIS PC:**
+```bash
+pg_dump -U postgres -d solar_om_db -F c -f solar_om_db.backup
+```
+
+**On the OTHER PC:**
+```bash
+# Drop and recreate
+psql -U postgres -c "DROP DATABASE IF EXISTS solar_om_db;"
+psql -U postgres -c "CREATE DATABASE solar_om_db;"
+
+# Restore
+pg_restore -U postgres -d solar_om_db solar_om_db.backup
+```
+
+Make sure `pg_dump` and `pg_restore` are in your PATH (they come with PostgreSQL installation).

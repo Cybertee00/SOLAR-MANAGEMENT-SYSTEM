@@ -38,6 +38,10 @@ Thumbs.db
 *.sqlite
 *.db
 
+# Database dumps (backup files)
+scripts/database-dump/
+*.backup
+
 # Build outputs
 server/public/
 client/build/
