@@ -3,7 +3,11 @@
     "allow": [
       "Bash(dir:*)",
       "Bash(wc:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(psql:*)",
+      "Bash(node -e:*)",
+      "Bash(git check-ignore:*)"
     ]
   }
 }

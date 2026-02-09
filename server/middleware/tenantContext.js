@@ -99,6 +99,8 @@ function setTenantContext(pool) {
           // Don't set organization_id in session variables
           await client.query(`SET app.current_organization_id = ''`);
           await client.query(`SET app.current_user_id = '${userId}'`);
+          // Cache system owner status for optimized RLS policies
+          await client.query(`SET app.current_user_is_system_owner = 'true'`);
 
           // Store platform context
           req.platformMode = true;
@@ -149,8 +151,11 @@ function setTenantContext(pool) {
           } else {
             await client.query(`SET app.current_organization_id = ''`);
           }
-          
+
           await client.query(`SET app.current_user_id = '${userId}'`);
+
+          // Cache system owner status for optimized RLS policies (once per request)
+          await client.query(`SET app.current_user_is_system_owner = '${isSystemOwner}'`);
 
           // Fetch organization slug for file storage
           let organizationSlug = null;

@@ -43,6 +43,12 @@
   line-height: 1;
 }
 
+.calendar-nav-btn:disabled,
+.calendar-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .calendar-download-btn {
   padding: 4px 8px;
   font-size: 10px;

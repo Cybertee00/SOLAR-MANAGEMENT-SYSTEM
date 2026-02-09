@@ -12,10 +12,11 @@ const pool = new Pool({
 
 async function updateAdminPassword() {
   try {
-    console.log('Updating admin password to "tech1"...');
-    
+    const newPassword = process.env.NEW_ADMIN_PASSWORD || process.env.DEFAULT_USER_PASSWORD || 'changeme';
+    console.log(`Updating admin password${newPassword === 'changeme' ? ' (set NEW_ADMIN_PASSWORD env var for custom password)' : ''}...`);
+
     const saltRounds = 10;
-    const newPasswordHash = await bcrypt.hash('tech1', saltRounds);
+    const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
     
     const result = await pool.query(
       `UPDATE users 

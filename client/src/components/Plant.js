@@ -4,6 +4,7 @@ import { getPlantMapStructure, savePlantMapStructure, submitTrackerStatusRequest
 import { useAuth } from '../context/AuthContext';
 import { hasOrganizationContext, isSystemOwnerWithoutCompany } from '../utils/organizationContext';
 import { generatePlantMapReport } from '../utils/plantMapReport';
+import { ErrorAlert, SuccessAlert, InfoAlert } from './ErrorAlert';
 import './Plant.css';
 
 // Correct cabinet mapping: 24 cabinets total
@@ -141,6 +142,9 @@ function Plant() {
   const [currentCycle, setCurrentCycle] = useState(null);
   const [cycleLoading, setCycleLoading] = useState(false);
   const [resettingCycle, setResettingCycle] = useState(false);
+  const [alertError, setAlertError] = useState(null);
+  const [alertSuccess, setAlertSuccess] = useState(null);
+  const [alertInfo, setAlertInfo] = useState(null);
   const siteMapName = 'Site Map'; // Always "Site Map" for all organizations
   const location = useLocation();
   const lastLocationRef = useRef(null);
@@ -405,7 +409,7 @@ function Plant() {
   // Handle status request submission
   const handleSubmitStatusRequest = useCallback(async () => {
     if (selectedTrackers.size === 0) {
-      alert('Please select at least one tracker');
+      setAlertError('Please select at least one tracker');
       return;
     }
 
@@ -425,7 +429,7 @@ function Plant() {
       });
       
       console.log('[PLANT] Status request submitted successfully:', response.data);
-      alert(`Status request submitted successfully! ${selectedTrackers.size} tracker(s) marked as ${statusRequestForm.status_type === 'done' ? 'done' : 'halfway'}. Waiting for admin approval.`);
+      setAlertSuccess(`Status request submitted successfully! ${selectedTrackers.size} tracker(s) marked as ${statusRequestForm.status_type === 'done' ? 'done' : 'halfway'}. Waiting for admin approval.`);
       setShowStatusRequestModal(false);
       setSelectedTrackers(new Set());
       setStatusRequestForm({ status_type: 'done', message: '' });
@@ -435,9 +439,9 @@ function Plant() {
       
       // Handle duplicate request error gracefully
       if (error.response?.status === 409) {
-        alert(`Request already submitted. ${error.response?.data?.message || 'Please wait a moment before submitting again.'}`);
+        setAlertInfo(`Request already submitted. ${error.response?.data?.message || 'Please wait a moment before submitting again.'}`);
       } else {
-        alert(errorMessage);
+        setAlertError(errorMessage);
       }
     } finally {
       setSubmittingRequest(false);
@@ -505,7 +509,7 @@ function Plant() {
   // Handle cycle reset
   const handleResetCycle = useCallback(async () => {
     if (!isAdmin()) {
-      alert('Only administrators can reset cycles');
+      setAlertError('Only administrators can reset cycles');
       return;
     }
 
@@ -551,10 +555,10 @@ function Plant() {
         }
       }, 800);
       
-      alert(`Cycle reset successfully! New cycle: ${result.new_cycle_number}`);
+      setAlertSuccess(`Cycle reset successfully! New cycle: ${result.new_cycle_number}`);
     } catch (error) {
       console.error('[PLANT] Error resetting cycle:', error);
-      alert('Failed to reset cycle: ' + (error.response?.data?.error || error.message));
+      setAlertError('Failed to reset cycle: ' + (error.response?.data?.error || error.message));
     } finally {
       setResettingCycle(false);
     }
@@ -598,7 +602,7 @@ function Plant() {
   // Handle download report
   const handleDownloadReport = useCallback(async () => {
     if (!mapContainerRef.current) {
-      alert('Map container not found. Please refresh the page and try again.');
+      setAlertError('Map container not found. Please refresh the page and try again.');
       return;
     }
 
@@ -608,7 +612,7 @@ function Plant() {
 
     // Ensure cycle info is loaded before generating PDF
     if (cycleLoading) {
-      alert('Please wait for cycle information to load before generating the report.');
+      setAlertInfo('Please wait for cycle information to load before generating the report.');
       return;
     }
 
@@ -639,7 +643,7 @@ function Plant() {
       );
     } catch (error) {
       console.error('Error generating report:', error);
-      alert('Failed to generate report. Please try again.');
+      setAlertError('Failed to generate report. Please try again.');
     } finally {
       setDownloading(false);
     }
@@ -669,7 +673,10 @@ function Plant() {
 
   return (
     <div className="plant-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      
+      <ErrorAlert error={alertError} onClose={() => setAlertError(null)} />
+      <SuccessAlert message={alertSuccess} onClose={() => setAlertSuccess(null)} />
+      <InfoAlert message={alertInfo} onClose={() => setAlertInfo(null)} />
+
       {/* Header */}
       <div style={{ width: '100%', maxWidth: '1200px', marginBottom: '10px' }}>
         <h2 className="page-title" style={{ margin: '0 0 10px 0', textAlign: 'center' }}>{siteMapName}</h2>

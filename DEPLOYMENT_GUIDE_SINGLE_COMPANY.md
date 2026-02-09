@@ -1,10 +1,10 @@
 # SPHAiR Platform - Complete Deployment Guide (Single Company)
 
-**Version:** 1.0  
-**Date:** January 2026  
+**Version:** 1.1  
+**Date:** February 2026  
 **Target:** Single company deployment on DigitalOcean  
 **Estimated Setup Time:** 4-6 hours  
-**Estimated Monthly Cost:** $100-150
+**Estimated Monthly Cost:** $45-50/month (~$100-150 for 90 days)
 
 ---
 
@@ -59,6 +59,17 @@ This guide will deploy SPHAiR Platform for a single company using:
 - UptimeRobot - Uptime monitoring
 - Sentry - Error tracking
 - Zendesk - Support ticketing
+
+## Key Features
+
+**SPHAiR Platform includes:**
+- ✅ **Calendar System** - Automatically displays the current month on load
+- ✅ **Task Management** - Preventive and corrective maintenance tasks
+- ✅ **Multi-Tenant Support** - Organization-based data isolation
+- ✅ **Inventory Management** - Track spare parts and materials
+- ✅ **Report Generation** - Excel and PDF reports
+- ✅ **User Management** - Role-based access control
+- ✅ **File Uploads** - Secure file storage and management
 
 **Architecture:**
 ```
@@ -1156,6 +1167,13 @@ systemctl reload nginx
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** January 2026  
+## Recent Updates
+
+**Version 1.1 (February 2026):**
+- ✅ Calendar component now automatically displays the current month on load
+- ✅ Updated cost estimates to reflect actual monthly pricing
+- ✅ Consolidated all deployment information into this single comprehensive guide
+
+**Document Version:** 1.1  
+**Last Updated:** February 2026  
 **Status:** Complete Deployment Guide for Single Company

@@ -17,11 +17,29 @@ CREATE INDEX IF NOT EXISTS idx_task_assignments_user_id ON task_assignments(user
 
 -- Migrate existing single assignments to the new table
 -- This preserves existing task assignments
-INSERT INTO task_assignments (task_id, user_id, assigned_at)
-SELECT id, assigned_to, assigned_at
-FROM tasks
-WHERE assigned_to IS NOT NULL
-ON CONFLICT (task_id, user_id) DO NOTHING;
+-- Handle case where assigned_at column might not exist in tasks table yet
+DO $$
+BEGIN
+  -- Check if assigned_at column exists in tasks table
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'tasks' AND column_name = 'assigned_at'
+  ) THEN
+    -- Column exists, use it (or fallback to created_at if NULL)
+    INSERT INTO task_assignments (task_id, user_id, assigned_at)
+    SELECT id, assigned_to, COALESCE(assigned_at, created_at)
+    FROM tasks
+    WHERE assigned_to IS NOT NULL
+    ON CONFLICT (task_id, user_id) DO NOTHING;
+  ELSE
+    -- Column doesn't exist yet, use created_at as fallback
+    INSERT INTO task_assignments (task_id, user_id, assigned_at)
+    SELECT id, assigned_to, created_at
+    FROM tasks
+    WHERE assigned_to IS NOT NULL
+    ON CONFLICT (task_id, user_id) DO NOTHING;
+  END IF;
+END $$;
 
 -- Note: We keep the assigned_to column for backward compatibility
 -- It will store the primary assignee (first user in the list)

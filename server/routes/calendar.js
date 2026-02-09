@@ -1,7 +1,28 @@
 const express = require('express');
+const multer = require('multer');
 const { requireAuth } = require('../middleware/auth');
 const { requireFeature } = require('../middleware/requireFeature');
-const { generateYearCalendarExcel } = require('../utils/calendarExcelGenerator');
+const { requireSystemOwner } = require('../middleware/tenantContext');
+const { parseYearCalendarExcel } = require('../utils/parseYearCalendarExcel');
+const {
+  getOrganizationIdFromRequest,
+  isSystemOwnerWithoutCompany
+} = require('../utils/organizationFilter');
+const {
+  getOrganizationSlugFromRequest,
+  ensureCompanyDirs,
+  getStoragePath
+} = require('../utils/organizationStorage');
+const fs = require('fs');
+const path = require('path');
+
+const YEAR_CALENDAR_TEMPLATE_FILENAME = 'year-calendar-template.xlsx';
+
+const uploadStorage = multer.memoryStorage();
+const upload = multer({
+  storage: uploadStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
 
 module.exports = (pool) => {
   const router = express.Router();
@@ -275,20 +296,96 @@ module.exports = (pool) => {
     }
   });
 
-  // Download Year Calendar as Excel
-  router.get('/download', requireAuth, async (req, res) => {
+  // Upload Year Calendar Excel (system owner only) – import events and save template for download
+  router.post('/upload', requireAuth, requireSystemOwner, upload.single('file'), async (req, res) => {
     try {
-      const { year } = req.query;
-      const targetYear = year ? parseInt(year) : new Date().getFullYear();
-      
-      const { buffer, filename } = await generateYearCalendarExcel(pool, targetYear);
-      
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(buffer);
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.status(403).json({ error: 'Please select a company to upload the year calendar' });
+      }
+      const organizationId = getOrganizationIdFromRequest(req);
+      if (!organizationId) {
+        return res.status(403).json({ error: 'Company context required' });
+      }
+      if (!req.file || !req.file.buffer) {
+        return res.status(400).json({ error: 'No file uploaded. Please select an Excel (.xlsx) file.' });
+      }
+      const isExcel = req.file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        (req.file.originalname && req.file.originalname.toLowerCase().endsWith('.xlsx'));
+      if (!isExcel) {
+        return res.status(400).json({ error: 'Only Excel (.xlsx) files are allowed.' });
+      }
+
+      const events = await parseYearCalendarExcel(req.file.buffer);
+      const { getDb } = require('../middleware/tenantContext');
+      const db = getDb(req, pool);
+
+      let imported = 0;
+      for (const ev of events) {
+        try {
+          await db.query(
+            `INSERT INTO calendar_events 
+             (organization_id, event_date, task_title, procedure_code, frequency, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              organizationId,
+              ev.date,
+              ev.task_title,
+              ev.procedure_code || null,
+              ev.frequency || null,
+              req.session.userId
+            ]
+          );
+          imported++;
+        } catch (e) {
+          if (e.code !== '23505') throw e;
+        }
+      }
+      // Save uploaded file as year calendar template for this company
+      const slug = await getOrganizationSlugFromRequest(req, pool);
+      if (slug) {
+        await ensureCompanyDirs(slug);
+        const templatePath = getStoragePath(slug, 'calendar', YEAR_CALENDAR_TEMPLATE_FILENAME);
+        fs.writeFileSync(templatePath, req.file.buffer);
+      }
+
+      res.status(200).json({
+        message: 'Year calendar uploaded successfully',
+        imported,
+        total: events.length,
+        templateSaved: !!slug
+      });
     } catch (error) {
-      console.error('Error downloading calendar Excel:', error);
-      res.status(500).json({ error: 'Failed to generate calendar Excel file', details: error.message });
+      console.error('Error uploading year calendar:', error);
+      res.status(500).json({
+        error: 'Failed to upload year calendar',
+        details: error.message
+      });
+    }
+  });
+
+  // Get saved year calendar template file (for download) – available when template was uploaded
+  router.get('/year-template', requireAuth, async (req, res) => {
+    try {
+      if (isSystemOwnerWithoutCompany(req)) {
+        return res.status(404).json({ error: 'No company selected' });
+      }
+      const organizationId = getOrganizationIdFromRequest(req);
+      if (!organizationId) return res.status(404).json({ error: 'Company context required' });
+
+      const slug = await getOrganizationSlugFromRequest(req, pool);
+      if (!slug) return res.status(404).json({ error: 'Organization not found' });
+
+      const templatePath = getStoragePath(slug, 'calendar', YEAR_CALENDAR_TEMPLATE_FILENAME);
+      if (!fs.existsSync(templatePath)) {
+        return res.status(404).json({ error: 'No year calendar template has been uploaded for this company yet.' });
+      }
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${YEAR_CALENDAR_TEMPLATE_FILENAME}"`);
+      res.sendFile(path.resolve(templatePath));
+    } catch (error) {
+      console.error('Error serving year calendar template:', error);
+      res.status(500).json({ error: 'Failed to get year calendar template', details: error.message });
     }
   });
 

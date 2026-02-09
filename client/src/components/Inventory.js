@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getInventoryItems, adjustInventory, downloadInventoryExcel, getSparesUsage, createInventoryItem, updateInventoryItem } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { hasOrganizationContext, isSystemOwnerWithoutCompany } from '../utils/organizationContext';
+import { ErrorAlert, SuccessAlert } from './ErrorAlert';
 
 function Inventory() {
   const { isAdmin, user, loading: authLoading } = useAuth();
@@ -10,6 +11,8 @@ function Inventory() {
   const [lowOnly, setLowOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [alertError, setAlertError] = useState(null);
+  const [alertSuccess, setAlertSuccess] = useState(null);
   const searchDebounceRef = useRef(null);
 
   const [adjusting, setAdjusting] = useState(null); // item
@@ -143,7 +146,7 @@ function Inventory() {
       await downloadInventoryExcel();
       // Download is handled by the API function, no need to reload
     } catch (e) {
-      alert('Download failed: ' + (e.response?.data?.error || e.message));
+      setAlertError({ message: 'Download failed', details: e.response?.data?.error || e.message });
     }
   };
 
@@ -170,14 +173,15 @@ function Inventory() {
     try {
       const delta = parseInt(qtyChange, 10);
       if (!Number.isFinite(delta) || delta === 0) {
-        alert('Enter a non-zero integer quantity change (e.g., 5 or -2)');
+        setAlertError({ message: 'Enter a non-zero integer quantity change (e.g., 5 or -2)' });
         return;
       }
       await adjustInventory({ item_code: adjusting.item_code, qty_change: delta, note, tx_type: delta > 0 ? 'restock' : 'adjust' });
       setAdjusting(null);
+      setAlertSuccess({ message: 'Inventory adjusted successfully!' });
       await load(q, lowOnly);
     } catch (e) {
-      alert('Adjust failed: ' + (e.response?.data?.error || e.message));
+      setAlertError({ message: 'Adjust failed', details: e.response?.data?.error || e.message });
     }
   };
 
@@ -207,6 +211,16 @@ function Inventory() {
 
   return (
     <div>
+      <ErrorAlert
+        error={alertError}
+        onClose={() => setAlertError(null)}
+        title="Inventory Error"
+      />
+      <SuccessAlert
+        message={alertSuccess?.message}
+        onClose={() => setAlertSuccess(null)}
+        title="Success"
+      />
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '15px' }}>
         <h2 className="page-title" style={{ margin: 0 }}>Inventory Count</h2>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -659,9 +673,10 @@ function Inventory() {
                 await createInventoryItem(newItem);
                 setShowAddModal(false);
                 setNewItem({ section: '', item_code: '', item_description: '', part_type: '', min_level: 0, actual_qty: 0 });
+                setAlertSuccess({ message: 'Spare created successfully!' });
                 await load(q, lowOnly);
               } catch (error) {
-                alert('Failed to create spare: ' + (error.response?.data?.error || error.message));
+                setAlertError({ message: 'Failed to create spare', details: error.response?.data?.error || error.message });
               }
             }}>
               <div className="form-group" style={{ marginBottom: '14px' }}>
@@ -784,16 +799,17 @@ function Inventory() {
                 }
 
                 if (Object.keys(updates).length === 0) {
-                  alert('No changes detected. Please modify at least one field.');
+                  setAlertError({ message: 'No changes detected. Please modify at least one field.' });
                   return;
                 }
 
                 await updateInventoryItem(editingItem.item_code, updates);
                 setEditingItem(null);
                 setEditForm({ section: '', item_code: '', item_description: '', part_type: '', min_level: 0 });
+                setAlertSuccess({ message: 'Spare updated successfully!' });
                 await load(q, lowOnly);
               } catch (error) {
-                alert('Failed to update spare: ' + (error.response?.data?.error || error.message));
+                setAlertError({ message: 'Failed to update spare', details: error.response?.data?.error || error.message });
               }
             }}>
               <div className="form-group" style={{ marginBottom: '14px' }}>

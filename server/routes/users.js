@@ -455,73 +455,49 @@ module.exports = (pool) => {
   // Rate limiting removed for frequent use
   router.post('/', requireAdmin, validateCreateUser, async (req, res) => {
     try {
-      const { username, email, full_name, role, roles, password, organization_id } = req.body;
+      const { username, email, full_name, role, roles, password } = req.body;
 
       if (!username || !email || !full_name) {
         return res.status(400).json({ error: 'Username, email, and full name are required' });
       }
 
-      // CRITICAL: Determine organization_id for user
-      // This prevents data leakage - users MUST belong to an organization
-      const { getOrganizationIdFromRequest, isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
+      // New user's organization = creator's organization (no organization_id from body).
+      // This prevents leaking users into other companies.
+      const { getOrganizationIdFromRequest } = require('../utils/organizationFilter');
       const { getDb } = require('../middleware/tenantContext');
       const db = getDb(req, pool);
-      
-      let userOrganizationId = null;
-      
-      // Check if user is system_owner
-      const isSystemOwner = req.session.roles?.includes('system_owner') || 
+
+      const creatorOrganizationId = getOrganizationIdFromRequest(req);
+      const userRoles = roles || (role ? [role] : ['technician']);
+      const isCreatingSystemOwner = userRoles.includes('system_owner') || userRoles.includes('super_admin');
+
+      const isSystemOwner = req.session.roles?.includes('system_owner') ||
                            req.session.role === 'system_owner' ||
                            req.session.roles?.includes('super_admin') ||
                            req.session.role === 'super_admin';
-      
-      if (isSystemOwner) {
-        // System owner creating user: Use provided organization_id or require it
-        if (organization_id) {
-          // Verify organization exists
-          const orgCheck = await db.query('SELECT id, name, is_active FROM organizations WHERE id = $1', [organization_id]);
-          if (orgCheck.rows.length === 0) {
-            return res.status(400).json({ error: 'Invalid organization_id provided' });
-          }
-          if (!orgCheck.rows[0].is_active) {
-            return res.status(400).json({ error: 'Cannot create user for inactive organization' });
-          }
-          userOrganizationId = organization_id;
-        } else {
-          // System owner must specify organization_id when creating non-system-owner users
-          // Check if creating a system_owner user (they don't need organization_id)
-          const userRoles = roles || (role ? [role] : ['technician']);
-          const isCreatingSystemOwner = userRoles.includes('system_owner') || userRoles.includes('super_admin');
-          
-          if (!isCreatingSystemOwner) {
-            return res.status(400).json({ 
-              error: 'Organization is required', 
-              message: 'When creating a user, you must specify which organization they belong to. Use organization_id field.' 
-            });
-          }
-          // System owners don't have organization_id (platform-level users)
-          userOrganizationId = null;
-        }
+
+      let userOrganizationId = null;
+
+      if (isCreatingSystemOwner) {
+        // System owners are platform-level; no organization
+        userOrganizationId = null;
       } else {
-        // Regular admin creating user: Use their organization_id automatically
-        const adminOrgId = getOrganizationIdFromRequest(req);
-        if (!adminOrgId) {
-          return res.status(400).json({ 
-            error: 'Organization context required', 
-            message: 'You must belong to an organization to create users. Users will be assigned to your organization.' 
+        // Non-system-owner user: must belong to creator's organization
+        if (!creatorOrganizationId) {
+          return res.status(400).json({
+            error: 'Organization context required',
+            message: 'Select a company first, or ensure you belong to an organization. New users are assigned to your organization.'
           });
         }
-        userOrganizationId = adminOrgId;
-        
-        // Regular admins cannot create system_owner users
-        const userRoles = roles || (role ? [role] : ['technician']);
-        if (userRoles.includes('system_owner') || userRoles.includes('super_admin')) {
-          return res.status(403).json({ error: 'Only system owners can create system owner users' });
-        }
+        userOrganizationId = creatorOrganizationId;
       }
 
-      // Use default password "witkop123" if no password provided (super admin only)
-      const DEFAULT_PASSWORD = 'witkop123';
+      if (!isSystemOwner && (userRoles.includes('system_owner') || userRoles.includes('super_admin'))) {
+        return res.status(403).json({ error: 'Only system owners can create system owner users' });
+      }
+
+      // Use default password from environment if no password provided (super admin only)
+      const DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'witkop123';
       const useDefaultPassword = !password || password.trim() === '';
       
       if (!useDefaultPassword && password.length < 6) {

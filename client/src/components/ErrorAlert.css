@@ -1,0 +1,241 @@
+/* ErrorAlert Component Styles */
+
+.error-alert-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.error-alert-content {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  max-width: 450px;
+  width: 90%;
+  max-height: 80vh;
+  overflow: hidden;
+  animation: slideIn 0.2s ease-out;
+}
+
+/* Type-specific styles */
+.error-alert-error {
+  border-top: 4px solid #dc2626;
+}
+
+.error-alert-warning {
+  border-top: 4px solid #f59e0b;
+}
+
+.error-alert-success {
+  border-top: 4px solid #10b981;
+}
+
+.error-alert-info {
+  border-top: 4px solid #3b82f6;
+}
+
+.error-alert-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.error-alert-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.error-alert-icon-error {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.error-alert-icon-warning {
+  background: #fef3c7;
+  color: #f59e0b;
+}
+
+.error-alert-icon-success {
+  background: #d1fae5;
+  color: #10b981;
+}
+
+.error-alert-icon-info {
+  background: #dbeafe;
+  color: #3b82f6;
+}
+
+.error-alert-header h3 {
+  margin: 0;
+  flex: 1;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.error-alert-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.error-alert-close:hover {
+  background-color: #f3f4f6;
+  color: #111827;
+}
+
+.error-alert-close:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.error-alert-body {
+  padding: 20px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.error-message {
+  margin: 0;
+  color: #374151;
+  font-size: 14px;
+  line-height: 1.6;
+  word-wrap: break-word;
+}
+
+.error-details {
+  margin-top: 16px;
+  background: #f9fafb;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.error-details summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #6b7280;
+  font-weight: 500;
+  user-select: none;
+}
+
+.error-details summary:hover {
+  color: #374151;
+}
+
+.error-details pre {
+  margin: 0;
+  padding: 14px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #4b5563;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-alert-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.error-alert-btn {
+  padding: 8px 20px;
+  background: #374151;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.error-alert-btn:hover {
+  background: #1f2937;
+}
+
+.error-alert-btn:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Success button variation */
+.error-alert-success .error-alert-btn {
+  background: #10b981;
+}
+
+.error-alert-success .error-alert-btn:hover {
+  background: #059669;
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+  .error-alert-content {
+    width: 95%;
+    margin: 10px;
+  }
+
+  .error-alert-header {
+    padding: 14px 16px;
+  }
+
+  .error-alert-body {
+    padding: 16px;
+  }
+
+  .error-alert-footer {
+    padding: 10px 16px;
+  }
+}

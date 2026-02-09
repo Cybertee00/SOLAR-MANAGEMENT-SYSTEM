@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getApiBaseUrl } from '../api/api';
 import { getErrorMessage } from '../utils/errorHandler';
+import { SuccessAlert } from './ErrorAlert';
 import './UserManagement.css';
 
 function OrganizationBranding() {
@@ -24,6 +25,7 @@ function OrganizationBranding() {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState(null);
   const [selectedLogoFile, setSelectedLogoFile] = useState(null);
+  const [alertSuccess, setAlertSuccess] = useState(null);
 
   useEffect(() => {
     if (id) {
@@ -199,8 +201,8 @@ function OrganizationBranding() {
       if (fileInput) {
         fileInput.value = '';
       }
-      
-      alert('Logo uploaded successfully');
+
+      setAlertSuccess('Logo uploaded successfully');
     } catch (error) {
       setError(getErrorMessage(error));
     } finally {
@@ -232,7 +234,7 @@ function OrganizationBranding() {
         throw new Error(errorData.error || 'Failed to save branding');
       }
 
-      alert('Branding saved successfully');
+      setAlertSuccess('Branding saved successfully');
     } catch (error) {
       setError(getErrorMessage(error));
     } finally {
@@ -246,6 +248,8 @@ function OrganizationBranding() {
 
   return (
     <div className="user-management-container">
+      <SuccessAlert message={alertSuccess} onClose={() => setAlertSuccess(null)} />
+
       <div className="user-management-header">
         <div>
           <Link to="/platform/organizations" className="btn btn-sm btn-secondary" style={{ marginRight: '10px', textDecoration: 'none' }}>

@@ -4,6 +4,7 @@ import { getTasks, createTask, getChecklistTemplates, getUsers } from '../api/ap
 import { useAuth } from '../context/AuthContext';
 import { hasOrganizationContext, isSystemOwnerWithoutCompany } from '../utils/organizationContext';
 import { getErrorMessage } from '../utils/errorHandler';
+import { ErrorAlert, SuccessAlert } from './ErrorAlert';
 
 function Tasks() {
   const { isAdmin, isSuperAdmin, user, loading: authLoading } = useAuth();
@@ -29,6 +30,8 @@ function Tasks() {
     hours_worked: '',
     budgeted_hours: ''
   });
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
 
   useEffect(() => {
     // Wait for AuthContext to finish loading before checking organization context
@@ -133,11 +136,11 @@ function Tasks() {
         budgeted_hours: ''
       });
       loadTasks();
-      alert(`Task created successfully! Task Code: ${response.data.task_code}`);
-    } catch (error) {
-      console.error('Error creating task:', error);
-      const errorMessage = getErrorMessage(error, 'Failed to create task');
-      alert(`Failed to create task: ${errorMessage}`);
+      setSuccess(`Task created successfully! Task Code: ${response.data.task_code}`);
+    } catch (err) {
+      console.error('Error creating task:', err);
+      const errorMessage = getErrorMessage(err, 'Failed to create task');
+      setError({ message: `Failed to create task: ${errorMessage}` });
     }
   };
 
@@ -147,6 +150,8 @@ function Tasks() {
 
   return (
     <div>
+      <ErrorAlert error={error} onClose={() => setError(null)} title="Task Error" />
+      <SuccessAlert message={success} onClose={() => setSuccess(null)} title="Success" />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
         <h2 className="page-title" style={{ marginBottom: 0 }}>PM Tasks</h2>
         {isAdmin() && (

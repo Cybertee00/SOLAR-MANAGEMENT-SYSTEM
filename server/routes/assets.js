@@ -1,11 +1,12 @@
 const express = require('express');
 const { getDb } = require('../middleware/tenantContext');
+const { requireAuth } = require('../middleware/auth');
 
 module.exports = (pool) => {
   const router = express.Router();
 
   // Get all assets (RLS will automatically filter by organization_id)
-  router.get('/', async (req, res) => {
+  router.get('/', requireAuth, async (req, res) => {
     try {
       // Use req.db if available (has tenant context), otherwise fall back to pool
       const db = getDb(req, pool);
@@ -18,7 +19,7 @@ module.exports = (pool) => {
   });
 
   // Get asset by ID
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', requireAuth, async (req, res) => {
     try {
       const db = getDb(req, pool);
       const result = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
@@ -33,7 +34,7 @@ module.exports = (pool) => {
   });
 
   // Get assets by type
-  router.get('/type/:type', async (req, res) => {
+  router.get('/type/:type', requireAuth, async (req, res) => {
     try {
       const db = getDb(req, pool);
       const result = await db.query('SELECT * FROM assets WHERE asset_type = $1 ORDER BY asset_code', [req.params.type]);
@@ -45,7 +46,7 @@ module.exports = (pool) => {
   });
 
   // Create asset
-  router.post('/', async (req, res) => {
+  router.post('/', requireAuth, async (req, res) => {
     try {
       const { asset_code, asset_name, asset_type, location, installation_date, status } = req.body;
       

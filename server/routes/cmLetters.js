@@ -2,10 +2,11 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { requireFeature } = require('../middleware/requireFeature');
+const { requireAuth } = require('../middleware/auth');
 const { generateFaultLogExcel } = require('../utils/faultLogGenerator');
-const { 
-  getOrganizationSlugFromRequest, 
-  getStoragePath, 
+const {
+  getOrganizationSlugFromRequest,
+  getStoragePath,
   getFileUrl,
   ensureCompanyDirs,
   getOrganizationSlugById
@@ -16,7 +17,7 @@ module.exports = (pool) => {
   router.use(requireFeature(pool, 'cm_letters'));
 
   // Get all CM letters
-  router.get('/', async (req, res) => {
+  router.get('/', requireAuth, async (req, res) => {
     try {
       // System owners without a selected company should see no CM letters
       const { isSystemOwnerWithoutCompany, getOrganizationIdFromRequest } = require('../utils/organizationFilter');
@@ -77,7 +78,7 @@ module.exports = (pool) => {
   });
 
   // Download Fault Log Report (Excel) - MUST be before /:id route
-  router.get('/fault-log/download', async (req, res) => {
+  router.get('/fault-log/download', requireAuth, async (req, res) => {
     try {
       const { period = 'custom', startDate, endDate } = req.query;
 
@@ -183,7 +184,7 @@ module.exports = (pool) => {
   });
 
   // Get CM letter by ID
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', requireAuth, async (req, res) => {
     try {
       // System owners without a selected company should see no CM letters
       const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
@@ -290,7 +291,7 @@ module.exports = (pool) => {
   });
 
   // Update CM letter status
-  router.patch('/:id/status', async (req, res) => {
+  router.patch('/:id/status', requireAuth, async (req, res) => {
     try {
       const { status, resolved_at } = req.body;
       const updateFields = ['status = $1'];
@@ -325,7 +326,7 @@ module.exports = (pool) => {
   });
 
   // Update CM letter fault log data
-  router.patch('/:id/fault-log', async (req, res) => {
+  router.patch('/:id/fault-log', requireAuth, async (req, res) => {
     try {
       const {
         reported_by,

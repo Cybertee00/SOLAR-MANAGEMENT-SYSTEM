@@ -10,7 +10,7 @@ module.exports = (pool) => {
   const router = express.Router();
 
   // Get all checklist responses
-  router.get('/', async (req, res) => {
+  router.get('/', requireAuth, async (req, res) => {
     try {
       const { task_id } = req.query;
       let query = `
@@ -40,7 +40,7 @@ module.exports = (pool) => {
   });
 
   // Get checklist response by ID
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', requireAuth, async (req, res) => {
     try {
       const result = await pool.query(`
         SELECT cr.*, 
@@ -304,15 +304,35 @@ module.exports = (pool) => {
               updates[code] = newQty;
             }
 
-            await client.query('COMMIT');
-
-            // Update Excel Actual Qty (best-effort)
+            // Update Excel Actual Qty BEFORE commit (still best-effort)
+            // If this fails, we log it but continue with database commit
             try {
               const { updateActualQtyInExcel } = require('../utils/inventoryExcelSync');
               await updateActualQtyInExcel(updates);
-            } catch (e) {}
-          } catch (e) {
+              console.log('Excel inventory sync successful', {
+                taskId: task_id,
+                updateCount: Object.keys(updates).length
+              });
+            } catch (excelSyncError) {
+              // Excel sync is supplementary - log warning but continue
+              console.warn('Excel inventory sync failed (continuing with DB commit):', {
+                error: excelSyncError.message,
+                taskId: task_id,
+                updateCount: Object.keys(updates).length
+              });
+              // Decision: Continue with commit since DB is source of truth
+            }
+
+            // Commit database transaction
+            await client.query('COMMIT');
+
+          } catch (transactionError) {
+            // This properly rolls back if DB operations fail
             await client.query('ROLLBACK');
+            console.error('Inventory transaction failed:', {
+              error: transactionError.message,
+              taskId: task_id
+            });
             inventorySlip = null;
           } finally {
             client.release();
@@ -484,7 +504,7 @@ module.exports = (pool) => {
   });
 
   // Save draft checklist response (auto-save)
-  router.post('/draft', async (req, res) => {
+  router.post('/draft', requireAuth, async (req, res) => {
     try {
       const { 
         task_id, 
@@ -542,7 +562,7 @@ module.exports = (pool) => {
   });
 
   // Get draft checklist response
-  router.get('/draft/:taskId', async (req, res) => {
+  router.get('/draft/:taskId', requireAuth, async (req, res) => {
     try {
       const result = await pool.query(
         'SELECT * FROM draft_checklist_responses WHERE task_id = $1',
@@ -573,7 +593,7 @@ module.exports = (pool) => {
   });
 
   // Delete draft checklist response (after successful submission)
-  router.delete('/draft/:taskId', async (req, res) => {
+  router.delete('/draft/:taskId', requireAuth, async (req, res) => {
     try {
       await pool.query(
         'DELETE FROM draft_checklist_responses WHERE task_id = $1',

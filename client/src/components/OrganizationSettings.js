@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getApiBaseUrl } from '../api/api';
 import { getErrorMessage } from '../utils/errorHandler';
+import { SuccessAlert } from './ErrorAlert';
 import './UserManagement.css';
 
 function OrganizationSettings() {
@@ -13,6 +14,7 @@ function OrganizationSettings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [alertSuccess, setAlertSuccess] = useState(null);
   const [subscriptionPlan, setSubscriptionPlan] = useState('');
   const [userLimit, setUserLimit] = useState('');
   const [newSetting, setNewSetting] = useState({
@@ -98,7 +100,7 @@ function OrganizationSettings() {
       }
 
       await loadSettings();
-      alert('Settings saved successfully');
+      setAlertSuccess('Settings saved successfully');
     } catch (error) {
       setError(getErrorMessage(error));
     } finally {
@@ -164,6 +166,8 @@ function OrganizationSettings() {
 
   return (
     <div className="user-management-container">
+      <SuccessAlert message={alertSuccess} onClose={() => setAlertSuccess(null)} />
+
       <div className="user-management-header">
         <div>
           <Link to="/platform/organizations" className="btn btn-sm btn-secondary" style={{ marginRight: '10px', textDecoration: 'none' }}>

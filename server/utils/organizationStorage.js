@@ -7,6 +7,7 @@
  *     companies/
  *       {company_slug}/              - e.g., "smart-innovations-energy"
  *         templates/                 - Template files (Excel, Word)
+ *         calendar/                  - Year calendar template (uploaded Excel)
  *         images/                    - Task/checklist images
  *         cm_letters/                - CM letter documents and reports
  *         inventory/                 - Inventory lists and related files
@@ -84,6 +85,7 @@ async function ensureCompanyDirs(organizationSlug) {
   const companyDir = getCompanyDir(organizationSlug);
   const subdirs = [
     'templates',      // Template files (Excel, Word)
+    'calendar',       // Year calendar template (uploaded Excel)
     'images',         // Task/checklist images
     'cm_letters',     // CM letter documents and reports
     'inventory',      // Inventory lists and related files
@@ -189,7 +191,7 @@ async function getOrganizationSlugById(pool, organizationId) {
  */
 function getStoragePath(organizationSlug, fileType, filename = null) {
   const validTypes = [
-    'templates', 'images', 'cm_letters', 'inventory', 
+    'templates', 'calendar', 'images', 'cm_letters', 'inventory', 
     'profiles', 'reports', 'exports', 'logs', 'documents', 'logos', 'plant'
   ];
   

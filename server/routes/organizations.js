@@ -13,6 +13,7 @@ const path = require('path');
 const { requireAuth, requireSuperAdmin, isSuperAdmin } = require('../middleware/auth');
 const { getDb } = require('../middleware/tenantContext');
 const { initializeDefaultConfigurations } = require('../utils/organizationConfig');
+const { cloneSystemTemplatesToOrganization } = require('../utils/templateCloning');
 const { getCompanyDisplayName } = require('../utils/companyDisplayName');
 const { 
   getCompanyDir, 
@@ -152,7 +153,14 @@ module.exports = (pool) => {
           const v = typeof s.setting_value === 'string' ? JSON.parse(s.setting_value) : s.setting_value;
           if (s.setting_key === 'user_limit') user_limit = v;
           if (s.setting_key === 'subscription_plan') subscription_plan = v;
-        } catch (_) {}
+        } catch (parseError) {
+          console.warn('Failed to parse organization setting:', {
+            settingKey: s.setting_key,
+            error: parseError.message,
+            organizationId: targetOrgId
+          });
+          // Use default values - already initialized above
+        }
       });
       res.json({
         organization: orgResult.rows[0],
@@ -281,19 +289,29 @@ module.exports = (pool) => {
         // Don't fail organization creation if branding initialization fails
       }
 
+      // Clone system templates to the new organization
+      try {
+        const cloneResult = await cloneSystemTemplatesToOrganization(db, orgId);
+        console.log(`Cloned ${cloneResult.cloned} system templates for organization: ${name} (${slug})`);
+      } catch (cloneError) {
+        console.error('Error cloning system templates:', cloneError);
+        // Don't fail organization creation if template cloning fails
+      }
+
       let firstUserCreated = null;
       if (firstUser && firstUser.username && firstUser.email && firstUser.full_name) {
         try {
           const username = firstUser.username.trim();
           const email = firstUser.email.trim();
           const fullName = firstUser.full_name.trim();
-          const password = (firstUser.password && firstUser.password.trim()) ? firstUser.password.trim() : 'witkop123';
+          const DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'witkop123';
+          const password = (firstUser.password && firstUser.password.trim()) ? firstUser.password.trim() : DEFAULT_PASSWORD;
           const passwordHash = await bcrypt.hash(password, 10);
           const userId = uuidv4();
           await db.query(
             `INSERT INTO users (id, username, email, full_name, role, roles, password_hash, is_active, password_changed, organization_id)
              VALUES ($1, $2, $3, $4, 'operations_admin', '["operations_admin"]'::jsonb, $5, true, $6, $7)`,
-            [userId, username, email, fullName, passwordHash, password === 'witkop123', orgId]
+            [userId, username, email, fullName, passwordHash, password === DEFAULT_PASSWORD, orgId]
           );
           const roleRow = await pool.query('SELECT id FROM roles WHERE role_code = $1', ['operations_admin']);
           if (roleRow.rows.length > 0) {
@@ -981,14 +999,18 @@ module.exports = (pool) => {
 
       try {
         const usersResult = await db.query(
-          `SELECT COUNT(*) as count FROM users 
-           WHERE organization_id = $1 
+          `SELECT COUNT(*) as count FROM users
+           WHERE organization_id = $1
            AND (role != 'system_owner' OR role IS NULL)`,
           [id]
         );
         dataCounts.users = parseInt(usersResult.rows[0]?.count || 0);
-      } catch (e) {
-        // Table or column may not exist
+      } catch (countError) {
+        console.warn('Failed to count users:', {
+          error: countError.message,
+          organizationId: id
+        });
+        // Continue with partial verification - table may not exist
       }
 
       try {
@@ -997,7 +1019,12 @@ module.exports = (pool) => {
           [id]
         );
         dataCounts.assets = parseInt(assetsResult.rows[0]?.count || 0);
-      } catch (e) {}
+      } catch (countError) {
+        console.warn('Failed to count assets:', {
+          error: countError.message,
+          organizationId: id
+        });
+      }
 
       try {
         const tasksResult = await db.query(
@@ -1005,7 +1032,12 @@ module.exports = (pool) => {
           [id]
         );
         dataCounts.tasks = parseInt(tasksResult.rows[0]?.count || 0);
-      } catch (e) {}
+      } catch (countError) {
+        console.warn('Failed to count tasks:', {
+          error: countError.message,
+          organizationId: id
+        });
+      }
 
       try {
         const templatesResult = await db.query(
@@ -1013,7 +1045,12 @@ module.exports = (pool) => {
           [id]
         );
         dataCounts.templates = parseInt(templatesResult.rows[0]?.count || 0);
-      } catch (e) {}
+      } catch (countError) {
+        console.warn('Failed to count templates:', {
+          error: countError.message,
+          organizationId: id
+        });
+      }
 
       try {
         const notificationsResult = await db.query(
@@ -1021,7 +1058,12 @@ module.exports = (pool) => {
           [id]
         );
         dataCounts.notifications = parseInt(notificationsResult.rows[0]?.count || 0);
-      } catch (e) {}
+      } catch (countError) {
+        console.warn('Failed to count notifications:', {
+          error: countError.message,
+          organizationId: id
+        });
+      }
 
       try {
         const trackerResult = await db.query(
@@ -1029,7 +1071,9 @@ module.exports = (pool) => {
           [id]
         );
         dataCounts.tracker_status_requests = parseInt(trackerResult.rows[0]?.count || 0);
-      } catch (e) {}
+      } catch (e) {
+        console.warn('Could not count tracker_status_requests (table may not exist):', e.message);
+      }
 
       const totalRecords = Object.values(dataCounts).reduce((sum, count) => sum + count, 0);
 

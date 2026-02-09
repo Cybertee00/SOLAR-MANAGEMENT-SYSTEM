@@ -21,10 +21,10 @@ async function createSuperAdmin() {
   try {
     await client.query('BEGIN');
 
-    const username = 'superadmin';
-    const email = 'superadmin@example.com';
+    const username = process.env.SUPERADMIN_USERNAME || 'superadmin';
+    const email = process.env.SUPERADMIN_EMAIL || 'superadmin@example.com';
     const fullName = 'Super Administrator';
-    const password = '0000';
+    const password = process.env.SUPERADMIN_PASSWORD || process.env.DEFAULT_USER_PASSWORD || 'changeme';
     const roles = ['super_admin'];
     const role = 'super_admin'; // Primary role for backward compatibility
 

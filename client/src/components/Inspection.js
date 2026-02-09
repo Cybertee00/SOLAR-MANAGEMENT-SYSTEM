@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { getTasks, createTask, getChecklistTemplates, getUsers } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { ErrorAlert, SuccessAlert } from './ErrorAlert';
 
 function Inspection() {
   const { isAdmin, isSuperAdmin } = useAuth();
@@ -16,6 +17,8 @@ function Inspection() {
     completed_date: '',
   });
   const [currentPage, setCurrentPage] = useState(1);
+  const [alertError, setAlertError] = useState(null);
+  const [alertSuccess, setAlertSuccess] = useState(null);
   const tasksPerPage = 4;
 
   const [newTask, setNewTask] = useState({
@@ -76,9 +79,9 @@ function Inspection() {
 
   const handleCreateTask = async (e) => {
     e.preventDefault();
-    
+
     if (!newTask.checklist_template_id || !newTask.location) {
-      alert('Please fill in all required fields');
+      setAlertError('Please fill in all required fields');
       return;
     }
     
@@ -104,11 +107,11 @@ function Inspection() {
         budgeted_hours: ''
       });
       loadTasks();
-      alert(`Inspection task created successfully! Task Code: ${response.data.task_code}`);
+      setAlertSuccess(`Inspection task created successfully! Task Code: ${response.data.task_code}`);
     } catch (error) {
       console.error('Error creating inspection task:', error);
       const errorMessage = error.response?.data?.error || error.response?.data?.details || error.message || 'Failed to create inspection task';
-      alert(`Failed to create inspection task: ${errorMessage}`);
+      setAlertError(`Failed to create inspection task: ${errorMessage}`);
     }
   };
 
@@ -124,6 +127,9 @@ function Inspection() {
 
   return (
     <div>
+      <ErrorAlert error={alertError} onClose={() => setAlertError(null)} />
+      <SuccessAlert message={alertSuccess} onClose={() => setAlertSuccess(null)} />
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
         <h2 className="page-title" style={{ marginBottom: 0 }}>Inspections</h2>
         {isAdmin() && (

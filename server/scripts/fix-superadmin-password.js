@@ -15,7 +15,7 @@ async function fixPassword() {
     console.log('Fixing superadmin password...\n');
     
     const username = 'superadmin';
-    const password = '0000';
+    const password = process.env.SUPERADMIN_PASSWORD || process.env.DEFAULT_USER_PASSWORD || 'changeme';
     
     // Check if user exists
     const userResult = await pool.query(`

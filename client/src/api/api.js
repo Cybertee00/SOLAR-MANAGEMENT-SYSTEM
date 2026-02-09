@@ -714,24 +714,41 @@ export const getCalendarEventsByDate = (date) => api.get(`/calendar/date/${date}
 export const createCalendarEvent = (data) => api.post('/calendar', data);
 export const updateCalendarEvent = (id, data) => api.put(`/calendar/${id}`, data);
 export const deleteCalendarEvent = (id) => api.delete(`/calendar/${id}`);
-export const downloadYearCalendar = async (year = null) => {
+
+/** Upload year calendar Excel (system owner only). Imports events and saves template for download. */
+export const uploadYearCalendar = async (file) => {
   const API_BASE_URL = getApiBaseUrl();
-  const params = year ? { year } : {};
-  const response = await axios.get(`${API_BASE_URL}/calendar/download`, {
-    params,
-    responseType: 'blob',
-    withCredentials: true
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${API_BASE_URL}/calendar/upload`, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include'
   });
-  
-  // Create download link
-  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const err = new Error(data.message || data.error || 'Upload failed');
+    err.details = data.details;
+    throw err;
+  }
+  return data;
+};
+
+/** Download saved year calendar template (Excel) for current company, if one was uploaded. */
+export const downloadYearCalendarTemplate = async () => {
+  const API_BASE_URL = getApiBaseUrl();
+  const response = await fetch(`${API_BASE_URL}/calendar/year-template`, {
+    credentials: 'include'
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || data.message || 'Template not available');
+  }
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  const contentDisposition = response.headers['content-disposition'];
-  const filename = contentDisposition 
-    ? contentDisposition.split('filename=')[1].replace(/"/g, '')
-    : `Year Calendar ${year || new Date().getFullYear()}.xlsx`;
-  link.setAttribute('download', filename);
+  link.setAttribute('download', 'year-calendar-template.xlsx');
   document.body.appendChild(link);
   link.click();
   link.remove();

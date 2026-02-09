@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getTask, submitChecklistResponse, saveDraftResponse, getDraftResponse, deleteDraftResponse, getInventoryItems } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { ErrorAlert, SuccessAlert } from './ErrorAlert';
 
 function ChecklistForm() {
   const { id } = useParams();
@@ -28,6 +29,8 @@ function ChecklistForm() {
   const [hoursWorked, setHoursWorked] = useState('');
   const { isTechnician, user } = useAuth();
   const [autoSaveStatus, setAutoSaveStatus] = useState(''); // 'saving', 'saved', 'error'
+  const [alertError, setAlertError] = useState(null);
+  const [alertSuccess, setAlertSuccess] = useState(null);
   const autoSaveTimeoutRef = useRef(null);
   const lastSavedRef = useRef(null);
   const sparesSearchDebounceRef = useRef(null);
@@ -313,7 +316,7 @@ function ChecklistForm() {
 
     // Validate metadata
     if (!metadata.inspected_by) {
-      alert('Please enter the name of the person who inspected (Inspected By)');
+      setAlertError({ message: 'Please enter the name of the person who inspected (Inspected By)' });
       setSubmitting(false);
       return;
     }
@@ -378,7 +381,7 @@ function ChecklistForm() {
           validationErrors[error.itemId] = error.error;
         });
         setErrors(validationErrors);
-        alert('Validation failed. Please check the form and fix errors.');
+        setAlertError({ message: 'Validation failed. Please check the form and fix errors.' });
       } else {
         // Delete draft after successful submission
         try {
@@ -388,9 +391,10 @@ function ChecklistForm() {
         }
         
         const overallStatus = response.data.validation.overallStatus.toUpperCase();
-        const message = `Checklist submitted successfully!\n\nOverall Status: ${overallStatus}\n\nYou can now download the PDF report from the Task Details page.`;
-        alert(message);
-        navigate(`/tasks/${id}`);
+        setAlertSuccess({
+          message: `Checklist submitted successfully! Overall Status: ${overallStatus}. You can now download the PDF report from the Task Details page.`,
+          onClose: () => navigate(`/tasks/${id}`)
+        });
       }
     } catch (error) {
       console.error('Error submitting checklist:', error);
@@ -404,15 +408,18 @@ function ChecklistForm() {
             validationErrors[err.itemId] = err.error;
           });
           setErrors(validationErrors);
-          alert(`Validation failed. Please check the highlighted items.`);
+          setAlertError({ message: 'Validation failed. Please check the highlighted items.' });
         } else {
           // Handle other errors
           const errorMessage = error.response.data.error || error.response.data.details || 'Failed to submit checklist';
-          alert(`Error: ${errorMessage}`);
+          setAlertError({ message: errorMessage, details: error.response.data });
         }
       } else {
         // Network or other errors
-        alert(`Failed to submit checklist: ${error.message || 'Network error. Please check your connection.'}`);
+        setAlertError({
+          message: 'Failed to submit checklist',
+          details: error.message || 'Network error. Please check your connection.'
+        });
       }
     } finally {
       setSubmitting(false);
@@ -697,6 +704,19 @@ function ChecklistForm() {
 
   return (
     <div>
+      <ErrorAlert
+        error={alertError}
+        onClose={() => setAlertError(null)}
+        title="Checklist Error"
+      />
+      <SuccessAlert
+        message={alertSuccess?.message}
+        onClose={() => {
+          if (alertSuccess?.onClose) alertSuccess.onClose();
+          setAlertSuccess(null);
+        }}
+        title="Success"
+      />
       <div style={{ marginBottom: '20px' }}>
         <button className="btn btn-secondary" onClick={() => navigate(`/tasks/${id}`)}>
             Back

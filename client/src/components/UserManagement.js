@@ -25,7 +25,7 @@ function UserManagement() {
     role: 'technician', // For backward compatibility
     roles: ['technician'], // Multiple roles
     password: '',
-    organization_id: '' // For system owners to select organization
+    organization_id: '' // Used when editing (system owners can change); on create, backend uses creator's org
   });
   const [roleEditData, setRoleEditData] = useState({
     roles: ['technician']
@@ -156,6 +156,8 @@ function UserManagement() {
           createData.roles = formData.roles;
           createData.role = formData.roles[0]; // Primary role for backward compatibility
         }
+        // Do not send organization_id on create: backend assigns creator's organization
+        delete createData.organization_id;
         await createUser(createData);
       }
 
@@ -558,16 +560,15 @@ function UserManagement() {
               </div>
             </div>
 
-            {/* Organization selection - only for system owners creating non-system-owner users */}
-            {(hasRole('system_owner') || isSuperAdmin()) && (
+            {/* Organization: only shown when editing (system owners can change org). On create, new user gets creator's organization. */}
+            {editingUser && (hasRole('system_owner') || isSuperAdmin()) && (
               <div className="form-group">
                 <label>
-                  Organization {!editingUser && <span style={{ color: '#dc3545' }}>*</span>}
-                  {editingUser && <small>(Only system owners can change)</small>}
+                  Organization <small>(Only system owners can change)</small>
                 </label>
                 {(() => {
-                  const isCreatingSystemOwner = formData.roles?.includes('system_owner') || formData.roles?.includes('super_admin');
-                  if (isCreatingSystemOwner && !editingUser) {
+                  const isUserSystemOwner = formData.roles?.includes('system_owner') || formData.roles?.includes('super_admin');
+                  if (isUserSystemOwner) {
                     return (
                       <div>
                         <input
@@ -587,8 +588,7 @@ function UserManagement() {
                       name="organization_id"
                       value={formData.organization_id || ''}
                       onChange={handleInputChange}
-                      required={!editingUser}
-                      disabled={editingUser && !hasRole('system_owner') && !isSuperAdmin()}
+                      disabled={!hasRole('system_owner') && !isSuperAdmin()}
                     >
                       <option value="">-- Select Organization --</option>
                       {availableOrganizations
@@ -601,11 +601,6 @@ function UserManagement() {
                     </select>
                   );
                 })()}
-                {!editingUser && formData.roles && !formData.roles.includes('system_owner') && !formData.roles.includes('super_admin') && (
-                  <small className="form-text text-muted">
-                    Users must belong to an organization to access company-specific data. This prevents data leakage.
-                  </small>
-                )}
               </div>
             )}
 

@@ -5,9 +5,10 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { validateUploadedFile } = require('../utils/fileValidator');
 const logger = require('../utils/logger');
-const { 
-  getOrganizationSlugFromRequest, 
-  getStoragePath, 
+const { requireAuth } = require('../middleware/auth');
+const {
+  getOrganizationSlugFromRequest,
+  getStoragePath,
   getFileUrl,
   ensureCompanyDirs,
   getOrganizationSlugById
@@ -59,11 +60,35 @@ const upload = multer({
   }
 });
 
+/**
+ * Safely delete uploaded file - handles errors gracefully
+ * @param {string} filePath - Path to file to delete
+ * @param {object} logContext - Additional context for logging
+ */
+function safeUnlinkFile(filePath, logContext = {}) {
+  if (!filePath) return;
+
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      logger.debug('Deleted uploaded file', { filePath, ...logContext });
+    }
+  } catch (unlinkError) {
+    logger.error('Failed to delete uploaded file', {
+      filePath,
+      error: unlinkError.message,
+      code: unlinkError.code,
+      ...logContext
+    });
+    // Don't throw - file deletion failure shouldn't crash request
+  }
+}
+
 module.exports = (pool) => {
   const router = express.Router();
 
   // Upload image for failed checklist item
-  router.post('/failed-item', upload.single('image'), async (req, res) => {
+  router.post('/failed-item', requireAuth, upload.single('image'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: 'No image file provided' });
@@ -96,7 +121,7 @@ module.exports = (pool) => {
 
       if (!task_id || !item_id || !section_id) {
         // Delete uploaded file if validation fails
-        fs.unlinkSync(req.file.path);
+        safeUnlinkFile(req.file.path, { reason: 'validation_failed', taskId: task_id });
         return res.status(400).json({ error: 'task_id, item_id, and section_id are required' });
       }
 
@@ -109,12 +134,12 @@ module.exports = (pool) => {
           [task_id]
         );
         if (taskResult.rows.length === 0 || !taskResult.rows[0].organization_id) {
-          fs.unlinkSync(req.file.path);
+          safeUnlinkFile(req.file.path, { reason: 'missing_organization', taskId: task_id });
           return res.status(400).json({ error: 'Unable to determine organization context' });
         }
         organizationSlug = await getOrganizationSlugById(pool, taskResult.rows[0].organization_id);
         if (!organizationSlug) {
-          fs.unlinkSync(req.file.path);
+          safeUnlinkFile(req.file.path, { reason: 'organization_lookup_failed', taskId: task_id });
           return res.status(400).json({ error: 'Unable to determine organization context' });
         }
       }
@@ -158,7 +183,7 @@ module.exports = (pool) => {
   });
 
   // Get images for a task
-  router.get('/task/:taskId', async (req, res) => {
+  router.get('/task/:taskId', requireAuth, async (req, res) => {
     try {
       const result = await pool.query(
         'SELECT * FROM failed_item_images WHERE task_id = $1 ORDER BY uploaded_at DESC',

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom';
 import { getNotifications, getUnreadNotificationCount, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, getTrackerStatusRequests, reviewTrackerStatusRequest } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { ErrorAlert, SuccessAlert, InfoAlert } from './ErrorAlert';
 import { 
   FaTasks, 
   FaBell, 
@@ -40,6 +41,9 @@ function Notifications() {
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [viewedNotifications, setViewedNotifications] = useState(new Set());
   const [hoveredNotification, setHoveredNotification] = useState(null);
+  const [alertError, setAlertError] = useState(null);
+  const [alertSuccess, setAlertSuccess] = useState(null);
+  const [alertInfo, setAlertInfo] = useState(null);
   const autoMarkTimers = useRef({});
   const reviewDebounceTimer = useRef(null);
   const processingRequestId = useRef(null);
@@ -91,7 +95,7 @@ function Notifications() {
     } catch (error) {
       console.error('Error marking notification as read:', error);
       if (!silent) {
-        alert('Failed to mark notification as read');
+        setAlertError('Failed to mark notification as read');
       }
     }
   }, [loadNotifications, loadUnreadCount]);
@@ -165,7 +169,7 @@ function Notifications() {
       loadUnreadCount();
     } catch (error) {
       console.error('Error marking all as read:', error);
-      alert('Failed to mark all notifications as read');
+      setAlertError('Failed to mark all notifications as read');
     }
   }, [loadNotifications, loadUnreadCount]);
 
@@ -182,7 +186,7 @@ function Notifications() {
       loadUnreadCount();
     } catch (error) {
       console.error('Error deleting notification:', error);
-      alert('Failed to delete notification');
+      setAlertError('Failed to delete notification');
     }
   }, [loadNotifications, loadUnreadCount, selectedNotification]);
 
@@ -203,7 +207,7 @@ function Notifications() {
       const requestStatus = notificationToReview.metadata?.request_status;
       if (requestStatus && requestStatus !== 'pending') {
         // Request already reviewed - remove notification and refresh
-        alert(`This request has already been ${requestStatus}.`);
+        setAlertInfo(`This request has already been ${requestStatus}.`);
         setNotifications(prev => prev.filter(n => n.id !== notificationToReview.id));
         await loadNotifications();
         await loadUnreadCount();
@@ -212,7 +216,7 @@ function Notifications() {
     }
 
     if (action === 'reject' && !rejectionReason.trim()) {
-      alert('Please provide a reason for rejection');
+      setAlertError('Please provide a reason for rejection');
       return;
     }
 
@@ -244,7 +248,7 @@ function Notifications() {
 
         try {
           await reviewTrackerStatusRequest(requestId, action, rejectionReason || null);
-          alert(`Request ${action === 'approve' ? 'approved' : 'rejected'} successfully!`);
+          setAlertSuccess(`Request ${action === 'approve' ? 'approved' : 'rejected'} successfully!`);
           setReviewingRequest(null);
           setRejectionReason('');
           
@@ -265,7 +269,7 @@ function Notifications() {
           // Handle 400 error for already-reviewed requests gracefully
           if (error.response?.status === 400 && error.response?.data?.error?.includes('already been reviewed')) {
             // Request was already reviewed - just remove notification and refresh
-            alert(`This request has already been reviewed.`);
+            setAlertInfo(`This request has already been reviewed.`);
             await loadNotifications();
             await loadUnreadCount();
             resolve();
@@ -274,13 +278,13 @@ function Notifications() {
           
           // Revert optimistic update on other errors
           if (notificationToRemove) {
-            setNotifications(prev => [...prev, notificationToRemove].sort((a, b) => 
+            setNotifications(prev => [...prev, notificationToRemove].sort((a, b) =>
               new Date(b.created_at) - new Date(a.created_at)
             ));
             setUnreadCount(prev => prev + 1);
           }
-          
-          alert(error.response?.data?.error || 'Failed to review request');
+
+          setAlertError(error.response?.data?.error || 'Failed to review request');
           reject(error);
         } finally {
           setProcessingRequest(false);
@@ -417,6 +421,10 @@ function Notifications() {
 
   return (
     <div className="notifications-container-outlook">
+      <ErrorAlert error={alertError} onClose={() => setAlertError(null)} />
+      <SuccessAlert message={alertSuccess} onClose={() => setAlertSuccess(null)} />
+      <InfoAlert message={alertInfo} onClose={() => setAlertInfo(null)} />
+
       {/* Header Toolbar */}
       <div className="notifications-toolbar">
         <div className="toolbar-left">

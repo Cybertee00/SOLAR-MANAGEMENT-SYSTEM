@@ -99,11 +99,6 @@ module.exports = (pool) => {
     await syncInFlight;
   }
 
-  // Test endpoint to verify routes are working
-  router.get('/test', (req, res) => {
-    res.json({ message: 'Inventory routes are working', timestamp: new Date().toISOString() });
-  });
-
   // List inventory items
   router.get('/items', requireAuth, async (req, res) => {
     try {

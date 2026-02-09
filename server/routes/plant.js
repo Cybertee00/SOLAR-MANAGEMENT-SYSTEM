@@ -122,7 +122,7 @@ module.exports = (pool) => {
   }
 
   // Get parsed plant map data (from Excel - legacy)
-  router.get('/map-data', async (req, res) => {
+  router.get('/map-data', requireAuth, async (req, res) => {
     try {
       console.log('[PLANT] Request received for /map-data');
       const mapData = await parsePlantMap();
@@ -136,7 +136,7 @@ module.exports = (pool) => {
   });
 
   // Get plant map structure from company-scoped folder
-  router.get('/structure', async (req, res) => {
+  router.get('/structure', requireAuth, async (req, res) => {
     try {
       console.log('[PLANT] Request received for /structure');
       
@@ -194,9 +194,6 @@ module.exports = (pool) => {
       console.log('[PLANT] Map structure file not found in company folder, returning empty structure');
       console.log('[PLANT] Plant maps must be stored in: uploads/companies/{slug}/plant/map-structure.json');
       return res.json({ structure: [], version: 0 });
-      console.log(`[PLANT] Returning structure from database with ${Array.isArray(structure) ? structure.length : 0} trackers, version ${version}`);
-      
-      res.json({ structure: Array.isArray(structure) ? structure : [], version });
     } catch (error) {
       console.error('[PLANT] Error getting structure:', error);
       res.status(500).json({ error: 'Failed to get plant map structure', details: error.message });
@@ -204,7 +201,7 @@ module.exports = (pool) => {
   });
 
   // Save plant map structure to database
-  router.post('/structure', async (req, res) => {
+  router.post('/structure', requireAuth, async (req, res) => {
     try {
       const { structure } = req.body;
       
@@ -270,7 +267,7 @@ module.exports = (pool) => {
   });
 
   // Serve the grasscutting Excel file from company-scoped folder
-  router.get('/grasscutting.xlsx', async (req, res) => {
+  router.get('/grasscutting.xlsx', requireAuth, async (req, res) => {
     try {
       // Get organization slug from request context
       const organizationSlug = await getOrganizationSlugFromRequest(req, pool);

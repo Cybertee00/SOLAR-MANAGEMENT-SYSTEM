@@ -40,7 +40,7 @@ function detectFrequencyFromTitle(title) {
   return null;
 }
 
-async function generateYearCalendarExcel(pool, year = null) {
+async function generateYearCalendarExcel(pool, year = null, organizationId = null) {
   try {
     // Use current year if not specified
     if (!year) {
@@ -64,13 +64,23 @@ async function generateYearCalendarExcel(pool, year = null) {
     // Update sheet name to current year
     calendarSheet.name = `Jan-Dec ${year}`;
     
-    // Get all events for the year from database
-    const eventsResult = await pool.query(
-      `SELECT * FROM calendar_events 
-       WHERE EXTRACT(YEAR FROM event_date) = $1 
-       ORDER BY event_date, task_title`,
-      [year]
-    );
+    // Get all events for the year from database (optionally scoped by organization)
+    let eventsResult;
+    if (organizationId) {
+      eventsResult = await pool.query(
+        `SELECT * FROM calendar_events 
+         WHERE organization_id = $1 AND EXTRACT(YEAR FROM event_date) = $2 
+         ORDER BY event_date, task_title`,
+        [organizationId, year]
+      );
+    } else {
+      eventsResult = await pool.query(
+        `SELECT * FROM calendar_events 
+         WHERE EXTRACT(YEAR FROM event_date) = $1 
+         ORDER BY event_date, task_title`,
+        [year]
+      );
+    }
     
     const events = eventsResult.rows;
     console.log(`[CALENDAR EXCEL] Found ${events.length} events for year ${year}`);

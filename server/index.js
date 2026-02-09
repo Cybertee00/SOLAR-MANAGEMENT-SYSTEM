@@ -495,22 +495,22 @@ app.use('/api/users', tenantContextMiddleware, usersRoutes(pool));
 app.use('/api/assets', tenantContextMiddleware, assetsRoutes(pool));
 app.use('/api/checklist-templates', tenantContextMiddleware, checklistTemplatesRoutes(pool));
 app.use('/api/tasks', tenantContextMiddleware, tasksRoutes(pool));
-app.use('/api/checklist-responses', checklistResponsesRoutes(pool));
+app.use('/api/checklist-responses', tenantContextMiddleware, checklistResponsesRoutes(pool));
 app.use('/api/cm-letters', tenantContextMiddleware, cmLettersRoutes(pool));
-app.use('/api/upload', uploadRoutes(pool));
-app.use('/api/api-tokens', apiTokensRoutes(pool));
-app.use('/api/webhooks', webhooksRoutes(pool));
+app.use('/api/upload', tenantContextMiddleware, uploadRoutes(pool));
+app.use('/api/api-tokens', tenantContextMiddleware, apiTokensRoutes(pool));
+app.use('/api/webhooks', tenantContextMiddleware, webhooksRoutes(pool));
 app.use('/api/inventory', tenantContextMiddleware, inventoryRoutes(pool));
-app.use('/api/early-completion-requests', earlyCompletionRequestsRoutes(pool));
-app.use('/api/notifications', notificationsRoutes(pool));
+app.use('/api/early-completion-requests', tenantContextMiddleware, earlyCompletionRequestsRoutes(pool));
+app.use('/api/notifications', tenantContextMiddleware, notificationsRoutes(pool));
 app.use('/api/platform', tenantContextMiddleware, platformRoutes(pool));
 app.use('/api/calendar', tenantContextMiddleware, calendarRoutes(pool));
 // License route removed - no longer needed
 // app.use('/api/license', licenseRoutes(pool));
 app.use('/api', syncRoutes(pool));
-app.use('/api/overtime-requests', overtimeRequestsRoutes(pool));
+app.use('/api/overtime-requests', tenantContextMiddleware, overtimeRequestsRoutes(pool));
 app.use('/api/plant', tenantContextMiddleware, plantRoutes(pool));
-app.use('/api/feedback', feedbackRoutes(pool));
+app.use('/api/feedback', tenantContextMiddleware, feedbackRoutes(pool));
 app.use('/api/organizations', tenantContextMiddleware, organizationsRoutes(pool));
 
 // Versioned API (v1) - mirrors /api for integration stability

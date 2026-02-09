@@ -1,7 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, downloadYearCalendar } from '../api/api';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  getCalendarEvents,
+  createCalendarEvent,
+  updateCalendarEvent,
+  deleteCalendarEvent,
+  uploadYearCalendar
+} from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { hasOrganizationContext, isSystemOwnerWithoutCompany } from '../utils/organizationContext';
+import { ErrorAlert } from './ErrorAlert';
 import './Calendar.css';
 
 // Color mapping for different task frequencies (from Excel - 100% match)
@@ -88,16 +95,39 @@ function getEventColor(event) {
 
 function Calendar() {
   const { isAdmin, user, loading: authLoading } = useAuth();
-  // Initialize to January 2026 (or current date if already 2026+)
+  // Initialize to current month of current year only (calendar is locked to current year)
   const getInitialDate = () => {
     const today = new Date();
-    const year = today.getFullYear();
-    // Start from 2026, or current year if already 2026 or later
-    const startYear = year >= 2026 ? year : 2026;
-    return new Date(startYear, 0, 1); // January 1st
+    return new Date(today.getFullYear(), today.getMonth(), 1); // First day of current month, current year
   };
-  
+
   const [currentDate, setCurrentDate] = useState(getInitialDate());
+
+  // Keep calendar year in sync with actual current year (e.g. when year rolls over or user returns to tab)
+  const actualYear = new Date().getFullYear();
+  useEffect(() => {
+    if (currentDate.getFullYear() !== actualYear) {
+      const today = new Date();
+      setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
+    }
+  }, [actualYear]);
+
+  // Re-sync to current year when user returns to tab (handles year change at midnight)
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setCurrentDate(prev => {
+          const today = new Date();
+          if (prev.getFullYear() !== today.getFullYear()) {
+            return new Date(today.getFullYear(), today.getMonth(), 1);
+          }
+          return prev;
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
   const [events, setEvents] = useState({});
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(null);
@@ -111,7 +141,15 @@ function Calendar() {
     description: '',
     frequency: ''
   });
-  
+  const [error, setError] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const roles = user?.roles || (user?.role ? [user.role] : []);
+  const isSystemOwner = roles.includes('system_owner') || roles.includes('super_admin') ||
+    user?.role === 'system_owner' || user?.role === 'super_admin';
+  const showUploadButton = isSystemOwner && hasOrganizationContext(user);
+
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth();
   
@@ -238,9 +276,12 @@ function Calendar() {
       setShowEventModal(false);
       setEditingEvent(null);
       setSelectedDate(null);
-    } catch (error) {
-      console.error('Error saving event:', error);
-      alert('Failed to save event. Please try again.');
+    } catch (err) {
+      console.error('Error saving event:', err);
+      setError({
+        message: 'Failed to save event. Please try again.',
+        details: err.response?.data?.error || err.message
+      });
     }
   };
 
@@ -255,9 +296,12 @@ function Calendar() {
       setShowEventModal(false);
       setEditingEvent(null);
       setSelectedDate(null);
-    } catch (error) {
-      console.error('Error deleting event:', error);
-      alert('Failed to delete event. Please try again.');
+    } catch (err) {
+      console.error('Error deleting event:', err);
+      setError({
+        message: 'Failed to delete event. Please try again.',
+        details: err.response?.data?.error || err.message
+      });
     }
   };
   
@@ -310,28 +354,52 @@ function Calendar() {
   const calendar = generateCalendar();
   const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   
+  // Navigation locked to current year only: cannot go to previous or next year
+  const actualCurrentYear = new Date().getFullYear();
+  const canGoPrevious = currentMonth > 0 && currentYear === actualCurrentYear;
+  const canGoNext = currentMonth < 11 && currentYear === actualCurrentYear;
+
   const handlePreviousMonth = () => {
-    const newDate = new Date(currentYear, currentMonth - 1, 1);
-    // Prevent going to 2025 or earlier
-    if (newDate.getFullYear() >= 2026) {
-      setCurrentDate(newDate);
-    }
+    if (!canGoPrevious) return;
+    setCurrentDate(new Date(currentYear, currentMonth - 1, 1));
   };
-  
+
   const handleNextMonth = () => {
+    if (!canGoNext) return;
     setCurrentDate(new Date(currentYear, currentMonth + 1, 1));
   };
-  
+
   const handleToday = () => {
     const today = new Date();
-    // If today is before 2026, go to January 2026, otherwise go to today
-    if (today.getFullYear() < 2026) {
-      setCurrentDate(new Date(2026, 0, 1));
-    } else {
-      setCurrentDate(today);
+    setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      setError('Please select an Excel (.xlsx) file.');
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      const result = await uploadYearCalendar(file);
+      await loadEvents();
+      setError(null);
+      alert(`Year calendar uploaded. ${result.imported} events imported. Template saved for download.`);
+    } catch (err) {
+      setError(err.message || 'Failed to upload year calendar.');
+    } finally {
+      setUploading(false);
     }
   };
-  
+
   // Helper to determine text color based on background
   function getContrastColor(hexColor) {
     if (!hexColor) return '#000000';
@@ -351,37 +419,57 @@ function Calendar() {
 
   return (
     <div className="calendar-container">
+      <ErrorAlert
+        error={error}
+        onClose={() => setError(null)}
+        title="Calendar Error"
+      />
       <div className="calendar-header">
         <h1>Year Calendar</h1>
         <div className="calendar-controls">
           <button 
             className="btn btn-secondary calendar-nav-btn calendar-icon-btn" 
             onClick={handlePreviousMonth}
-            title="Previous Month"
+            disabled={!canGoPrevious}
+            title={canGoPrevious ? "Previous Month" : "Only months in the current year are shown"}
           >
             ◀
           </button>
           <button 
             className="btn btn-secondary calendar-nav-btn calendar-icon-btn" 
             onClick={handleToday}
-            title="Today"
+            title="Go to current month"
           >
             ●
           </button>
           <button 
             className="btn btn-secondary calendar-nav-btn calendar-icon-btn" 
             onClick={handleNextMonth}
-            title="Next Month"
+            disabled={!canGoNext}
+            title={canGoNext ? "Next Month" : "Only months in the current year are shown"}
           >
             ▶
           </button>
-          <button 
-            className="btn btn-primary calendar-download-btn" 
-            onClick={() => downloadYearCalendar(currentYear)}
-            title="Download Year Calendar as Excel"
-          >
-            Download
-          </button>
+          {showUploadButton && (
+            <>
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary calendar-download-btn"
+                onClick={handleUploadClick}
+                disabled={uploading}
+                title="Upload Year Calendar Excel to import events and save as template"
+              >
+                {uploading ? 'Uploading…' : 'Upload'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 

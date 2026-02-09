@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getTask, startTask, pauseTask, resumeTask, completeTask, downloadTaskReport, getEarlyCompletionRequests, createEarlyCompletionRequest } from '../api/api';
 import { useAuth } from '../context/AuthContext';
+import { ErrorAlert, SuccessAlert, InfoAlert } from './ErrorAlert';
 
 function TaskDetail() {
   const { id } = useParams();
@@ -16,6 +17,9 @@ function TaskDetail() {
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [showPauseModal, setShowPauseModal] = useState(false);
   const [pauseReason, setPauseReason] = useState('');
+  const [alertError, setAlertError] = useState(null);
+  const [alertSuccess, setAlertSuccess] = useState(null);
+  const [alertInfo, setAlertInfo] = useState(null);
 
   useEffect(() => {
     loadTask();
@@ -65,31 +69,32 @@ function TaskDetail() {
         const now = new Date();
         const hour = now.getHours();
         const isOutsideWorkingHours = hour < 7 || hour >= 16;
-        
+
         if (isOutsideWorkingHours) {
-          alert('Task started outside normal working hours. Super admin has been notified for acknowledgement of your overtime work.');
+          setAlertInfo({ message: 'Task started outside normal working hours. Super admin has been notified for acknowledgement of your overtime work.' });
         }
       }
     } catch (error) {
       console.error('Error starting task:', error);
       const errorMessage = error.response?.data?.error || 'Failed to start task';
-      {
-        const scheduledDate = error.response?.data?.scheduled_date;
-        if (scheduledDate) {
-          alert(`${errorMessage}\n\nScheduled date: ${new Date(scheduledDate).toLocaleDateString()}\n\nYou can request early completion if needed.`);
-        } else {
-          alert(errorMessage);
-        }
+      const scheduledDate = error.response?.data?.scheduled_date;
+      if (scheduledDate) {
+        setAlertError({
+          message: errorMessage,
+          details: `Scheduled date: ${new Date(scheduledDate).toLocaleDateString()}. You can request early completion if needed.`
+        });
+      } else {
+        setAlertError({ message: errorMessage });
       }
     }
   };
   
   const handleRequestEarlyCompletion = async () => {
     if (!earlyCompletionMotivation.trim() || earlyCompletionMotivation.trim().length < 10) {
-      alert('Please provide a motivation (at least 10 characters)');
+      setAlertError({ message: 'Please provide a motivation (at least 10 characters)' });
       return;
     }
-    
+
     try {
       setSubmittingRequest(true);
       await createEarlyCompletionRequest({
@@ -99,10 +104,10 @@ function TaskDetail() {
       setShowEarlyCompletionModal(false);
       setEarlyCompletionMotivation('');
       loadEarlyCompletionRequests();
-      alert('Early completion request submitted. Waiting for super admin approval.');
+      setAlertSuccess({ message: 'Early completion request submitted. Waiting for super admin approval.' });
     } catch (error) {
       console.error('Error creating early completion request:', error);
-      alert(error.response?.data?.error || 'Failed to submit early completion request');
+      setAlertError({ message: error.response?.data?.error || 'Failed to submit early completion request' });
     } finally {
       setSubmittingRequest(false);
     }
@@ -110,7 +115,7 @@ function TaskDetail() {
 
   const handlePauseTask = async () => {
     if (!pauseReason.trim()) {
-      alert('Please provide a reason for pausing the task');
+      setAlertError({ message: 'Please provide a reason for pausing the task' });
       return;
     }
 
@@ -119,10 +124,10 @@ function TaskDetail() {
       setShowPauseModal(false);
       setPauseReason('');
       loadTask();
-      alert('Task paused successfully. Super admin has been notified.');
+      setAlertSuccess({ message: 'Task paused successfully. Super admin has been notified.' });
     } catch (error) {
       console.error('Error pausing task:', error);
-      alert(error.response?.data?.error || 'Failed to pause task');
+      setAlertError({ message: error.response?.data?.error || 'Failed to pause task' });
     }
   };
 
@@ -130,10 +135,10 @@ function TaskDetail() {
     try {
       await resumeTask(id);
       loadTask();
-      alert('Task resumed successfully');
+      setAlertSuccess({ message: 'Task resumed successfully' });
     } catch (error) {
       console.error('Error resuming task:', error);
-      alert(error.response?.data?.error || 'Failed to resume task');
+      setAlertError({ message: error.response?.data?.error || 'Failed to resume task' });
     }
   };
 
@@ -148,10 +153,10 @@ function TaskDetail() {
         duration_minutes: duration,
       });
       loadTask();
-      alert('Task completed successfully!');
+      setAlertSuccess({ message: 'Task completed successfully!' });
     } catch (error) {
       console.error('Error completing task:', error);
-      alert('Failed to complete task');
+      setAlertError({ message: 'Failed to complete task' });
     }
   };
 
@@ -165,6 +170,21 @@ function TaskDetail() {
 
   return (
     <div>
+      <ErrorAlert
+        error={alertError}
+        onClose={() => setAlertError(null)}
+        title="Task Error"
+      />
+      <SuccessAlert
+        message={alertSuccess?.message}
+        onClose={() => setAlertSuccess(null)}
+        title="Success"
+      />
+      <InfoAlert
+        message={alertInfo?.message}
+        onClose={() => setAlertInfo(null)}
+        title="Information"
+      />
       <div style={{ marginBottom: '20px' }}>
         <Link to="/tenant/tasks" className="btn btn-secondary">Back</Link>
       </div>
@@ -451,7 +471,7 @@ function TaskDetail() {
                 onClick={(e) => {
                   if (!id) {
                     e.preventDefault();
-                    alert('Error: Task ID not found. Please refresh the page.');
+                    setAlertError({ message: 'Error: Task ID not found. Please refresh the page.' });
                     return;
                   }
                   console.log('Downloading report for task:', id);

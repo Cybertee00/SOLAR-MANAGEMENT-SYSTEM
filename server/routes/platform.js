@@ -92,90 +92,12 @@ module.exports = (pool) => {
   });
 
   // Apply update (requires authentication)
+  // NOTE: Not yet implemented - returns 501 until deployment pipeline is configured
   router.post('/updates/apply', requirePlatformAuth, async (req, res) => {
-    const updateId = `update-${Date.now()}`;
-    const logFile = path.join(__dirname, '../logs', `update-${updateId}.log`);
-
-    try {
-      // Create logs directory if it doesn't exist
-      const logsDir = path.dirname(logFile);
-      if (!fs.existsSync(logsDir)) {
-        fs.mkdirSync(logsDir, { recursive: true });
-      }
-
-      const log = (message) => {
-        const timestamp = new Date().toISOString();
-        const logMessage = `[${timestamp}] ${message}\n`;
-        console.log(`[PLATFORM UPDATE] ${message}`);
-        fs.appendFileSync(logFile, logMessage);
-      };
-
-      log(`Update initiated by ${req.ip}`);
-
-      const { version, updateType = 'patch' } = req.body;
-
-      if (!version) {
-        return res.status(400).json({ error: 'Version is required' });
-      }
-
-      // Store update record in database
-      await pool.query(
-        `INSERT INTO platform_updates (id, version, update_type, status, initiated_by, initiated_at, log_file)
-         VALUES ($1, $2, $3, 'in_progress', $4, CURRENT_TIMESTAMP, $5)`,
-        [updateId, version, updateType, req.ip, logFile]
-      );
-
-      log(`Starting update to version ${version}`);
-
-      // Backup database
-      log('Creating database backup...');
-      const backupPath = path.join(__dirname, '../backups', `backup-${updateId}.sql`);
-      const backupDir = path.dirname(backupPath);
-      if (!fs.existsSync(backupDir)) {
-        fs.mkdirSync(backupDir, { recursive: true });
-      }
-
-      // Execute update (in production, this would pull from your update server)
-      log('Applying update...');
-      
-      // Update status to completed
-      await pool.query(
-        `UPDATE platform_updates 
-         SET status = 'completed', completed_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
-        [updateId]
-      );
-
-      log('Update completed successfully');
-
-      res.json({
-        success: true,
-        updateId,
-        version,
-        message: 'Update applied successfully',
-        logFile
-      });
-    } catch (error) {
-      console.error('[PLATFORM] Update error:', error);
-
-      // Update status to failed
-      try {
-        await pool.query(
-          `UPDATE platform_updates 
-           SET status = 'failed', error_message = $2, completed_at = CURRENT_TIMESTAMP
-           WHERE id = $1`,
-          [updateId, error.message]
-        );
-      } catch (dbError) {
-        console.error('[PLATFORM] Failed to update status:', dbError);
-      }
-
-      res.status(500).json({
-        error: 'Update failed',
-        updateId,
-        message: error.message
-      });
-    }
+    res.status(501).json({
+      error: 'Not implemented',
+      message: 'Platform update mechanism is not yet configured. Use your deployment pipeline (e.g., git pull + pm2 restart) to apply updates.'
+    });
   });
 
   // Get update status
@@ -238,74 +160,12 @@ module.exports = (pool) => {
   });
 
   // Rollback to previous version
+  // NOTE: Not yet implemented - returns 501 until deployment pipeline is configured
   router.post('/updates/rollback', requirePlatformAuth, async (req, res) => {
-    const rollbackId = `rollback-${Date.now()}`;
-    
-    try {
-      const log = (message) => {
-        console.log(`[PLATFORM ROLLBACK] ${message}`);
-      };
-
-      log(`Rollback initiated by ${req.ip}`);
-
-      // Find the last successful update
-      const lastUpdate = await pool.query(
-        `SELECT * FROM platform_updates 
-         WHERE status = 'completed'
-         ORDER BY completed_at DESC
-         LIMIT 1`
-      );
-
-      if (lastUpdate.rows.length === 0) {
-        return res.status(404).json({ error: 'No previous version found' });
-      }
-
-      const previousVersion = lastUpdate.rows[0].version;
-      
-      log(`Rolling back to version ${previousVersion}`);
-
-      // Store rollback record
-      await pool.query(
-        `INSERT INTO platform_updates (id, version, update_type, status, initiated_by, initiated_at)
-         VALUES ($1, $2, 'rollback', 'in_progress', $3, CURRENT_TIMESTAMP)`,
-        [rollbackId, previousVersion, req.ip]
-      );
-
-      // Execute rollback (implementation depends on your deployment method)
-      log('Rollback completed successfully');
-
-      await pool.query(
-        `UPDATE platform_updates 
-         SET status = 'completed', completed_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
-        [rollbackId]
-      );
-
-      res.json({
-        success: true,
-        rollbackId,
-        version: previousVersion,
-        message: 'Rollback completed successfully'
-      });
-    } catch (error) {
-      console.error('[PLATFORM] Rollback error:', error);
-      
-      try {
-        await pool.query(
-          `UPDATE platform_updates 
-           SET status = 'failed', error_message = $2, completed_at = CURRENT_TIMESTAMP
-           WHERE id = $1`,
-          [rollbackId, error.message]
-        );
-      } catch (dbError) {
-        console.error('[PLATFORM] Failed to update rollback status:', dbError);
-      }
-
-      res.status(500).json({
-        error: 'Rollback failed',
-        message: error.message
-      });
-    }
+    res.status(501).json({
+      error: 'Not implemented',
+      message: 'Platform rollback mechanism is not yet configured. Use your deployment pipeline (e.g., git revert + pm2 restart) to rollback.'
+    });
   });
 
   // Health check endpoint

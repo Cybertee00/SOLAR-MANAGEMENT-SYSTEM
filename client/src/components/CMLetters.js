@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getCMLetters, getCMLetter, updateCMLetterStatus, getApiBaseUrl, downloadFaultLog, updateCMLetterFaultLog } from '../api/api';
 import { useAuth } from '../context/AuthContext';
 import { hasOrganizationContext } from '../utils/organizationContext';
+import { ErrorAlert, SuccessAlert } from './ErrorAlert';
 
 function CMLetters() {
   const [letters, setLetters] = useState([]);
@@ -16,6 +17,8 @@ function CMLetters() {
   const [downloading, setDownloading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [alertError, setAlertError] = useState(null);
+  const [alertSuccess, setAlertSuccess] = useState(null);
   const { user, loading: authLoading } = useAuth();
   const itemsPerPage = 4;
 
@@ -107,7 +110,7 @@ function CMLetters() {
       }
     } catch (error) {
       console.error('Error loading CM letter details:', error);
-      alert('Failed to load CM letter details');
+      setAlertError({ message: 'Failed to load CM letter details', details: error.message });
       setShowDetailsModal(false);
     } finally {
       setLoadingDetails(false);
@@ -129,10 +132,10 @@ function CMLetters() {
       await updateCMLetterFaultLog(selectedLetter.id, faultLogData);
       await loadLetterDetails(selectedLetter.id); // Reload to get updated data
       setIsEditing(false);
-      alert('Fault log data saved successfully!');
+      setAlertSuccess({ message: 'Fault log data saved successfully!' });
     } catch (error) {
       console.error('Error saving fault log:', error);
-      alert(`Failed to save fault log data: ${error.response?.data?.error || error.message}`);
+      setAlertError({ message: 'Failed to save fault log data', details: error.response?.data?.error || error.message });
     } finally {
       setSaving(false);
     }
@@ -188,7 +191,7 @@ function CMLetters() {
       }
     } catch (error) {
       console.error('Error updating CM letter status:', error);
-      alert('Failed to update CM letter status');
+      setAlertError({ message: 'Failed to update CM letter status', details: error.message });
     }
   };
 
@@ -207,12 +210,12 @@ function CMLetters() {
   const handleDownloadFaultLog = async () => {
     // Validate date range
     if (!filter.startDate || !filter.endDate) {
-      alert('Please select both Start Date and End Date to download the fault log report.');
+      setAlertError({ message: 'Please select both Start Date and End Date to download the fault log report.' });
       return;
     }
-    
+
     if (new Date(filter.startDate) > new Date(filter.endDate)) {
-      alert('Start Date must be before or equal to End Date.');
+      setAlertError({ message: 'Start Date must be before or equal to End Date.' });
       return;
     }
     
@@ -226,8 +229,10 @@ function CMLetters() {
       // Success - file download is handled by the browser
     } catch (error) {
       console.error('Error downloading fault log:', error);
-      const errorMessage = error.message || 'Unknown error';
-      alert(`Failed to download fault log report.\n\nError: ${errorMessage}\n\nPlease ensure you have CM letters in the selected date range and try again.`);
+      setAlertError({
+        message: 'Failed to download fault log report',
+        details: `${error.message || 'Unknown error'}. Please ensure you have CM letters in the selected date range and try again.`
+      });
     } finally {
       setDownloading(false);
     }
@@ -247,6 +252,16 @@ function CMLetters() {
 
   return (
     <div>
+      <ErrorAlert
+        error={alertError}
+        onClose={() => setAlertError(null)}
+        title="CM Letters Error"
+      />
+      <SuccessAlert
+        message={alertSuccess?.message}
+        onClose={() => setAlertSuccess(null)}
+        title="Success"
+      />
       <div style={{ marginBottom: '20px' }}>
         <h2 className="page-title" style={{ margin: '0 0 20px 0' }}>Corrective Maintenance Letters</h2>
         

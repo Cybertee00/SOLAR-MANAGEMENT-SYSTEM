@@ -48,25 +48,67 @@ async function setupDatabase() {
     await appPool.query(schema);
     console.log('Schema created successfully');
 
-    // Run SaaS migrations FIRST (required for multi-tenancy)
-    const saasMigrations = [
-      'saas_001_create_organizations.sql',
-      'saas_002_create_subscription_tiers.sql',
-      'saas_003_add_organization_id.sql',
-      'saas_004_create_user_invitations.sql'
+    // Run Multi-Tenant migrations FIRST (required for multi-tenancy)
+    const multiTenantMigrations = [
+      'multi_tenant_001_create_organizations.sql',
+      'multi_tenant_002_create_tenant_configuration_tables.sql',
+      'multi_tenant_003_update_checklist_templates.sql',
+      'multi_tenant_005_create_smart_innovations_energy_org.sql',
+      'multi_tenant_006_add_organization_id_to_remaining_tables.sql',
+      'add_organization_id_to_feedback_and_drafts.sql'
     ];
     
-    console.log('Running SaaS migrations...');
-    for (const migrationFile of saasMigrations) {
+    console.log('Running Multi-Tenant migrations...');
+    for (const migrationFile of multiTenantMigrations) {
       const migrationPath = path.join(__dirname, '../db/migrations', migrationFile);
       if (fs.existsSync(migrationPath)) {
         const migration = fs.readFileSync(migrationPath, 'utf8');
         await appPool.query(migration);
-        console.log(`SaaS Migration ${migrationFile} applied successfully`);
+        console.log(`Multi-Tenant Migration ${migrationFile} applied successfully`);
       } else {
-        console.log(`Warning: SaaS migration ${migrationFile} not found`);
+        console.log(`Warning: Multi-Tenant migration ${migrationFile} not found`);
       }
     }
+
+    // Ensure users and assets tables have organization_id (if not added by migrations)
+    // This is a safety check since some migrations assume these columns exist
+    await appPool.query(`
+      DO $$
+      DECLARE
+        default_org_id UUID;
+      BEGIN
+        -- Get the default organization ID (Smart Innovations Energy)
+        SELECT id INTO default_org_id FROM organizations 
+        WHERE slug = 'smart-innovations-energy' 
+        LIMIT 1;
+
+        -- Add organization_id to users if it doesn't exist
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'users' AND column_name = 'organization_id'
+        ) THEN
+          ALTER TABLE users 
+            ADD COLUMN organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
+          CREATE INDEX IF NOT EXISTS idx_users_organization_id ON users(organization_id);
+          RAISE NOTICE 'Added organization_id to users table';
+        END IF;
+
+        -- Add organization_id to assets if it doesn't exist
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'assets' AND column_name = 'organization_id'
+        ) THEN
+          ALTER TABLE assets 
+            ADD COLUMN organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
+          -- Update existing assets to use default organization
+          IF default_org_id IS NOT NULL THEN
+            UPDATE assets SET organization_id = default_org_id WHERE organization_id IS NULL;
+          END IF;
+          CREATE INDEX IF NOT EXISTS idx_assets_organization_id ON assets(organization_id);
+          RAISE NOTICE 'Added organization_id to assets table';
+        END IF;
+      END $$;
+    `);
 
     // Run other migrations
     const migrations = [
@@ -78,6 +120,9 @@ async function setupDatabase() {
       'add_draft_images.sql',
       'add_draft_spares_used.sql',
       'add_password_to_users.sql',
+      'add_profile_image_to_users.sql', // Add profile_image column
+      'add_password_changed_column.sql', // Add password_changed column
+      'add_multiple_roles_support.sql', // Add roles column (must be before auth queries)
       'add_api_tokens_and_webhooks.sql',
       'add_inventory.sql',
       'create_calendar_events_table.sql',
@@ -85,7 +130,9 @@ async function setupDatabase() {
       'add_task_pause_resume.sql',
       'add_overtime_requests.sql',
       'add_spares_used_to_tasks_and_responses.sql',
-      'add_fault_log_fields_to_cm_letters.sql'
+      'add_fault_log_fields_to_cm_letters.sql',
+      'add_hours_tracking_and_notifications.sql', // Must run before add_multiple_task_assignments (adds assigned_at to tasks)
+      'add_multiple_task_assignments.sql' // Depends on assigned_at column from add_hours_tracking_and_notifications
     ];
     
     for (const migrationFile of migrations) {
@@ -97,7 +144,7 @@ async function setupDatabase() {
       }
     }
 
-    // Seed initial data (will use default organization created by saas_003)
+    // Seed initial data (will use default organization created by multi_tenant_005)
     await seedInitialData(appPool);
     console.log('Initial data seeded successfully');
 
@@ -113,20 +160,21 @@ async function seedInitialData(pool) {
   const bcrypt = require('bcrypt');
   const saltRounds = 10;
 
-  // Get default organization ID (created by saas_003 migration)
+  // Get default organization ID (created by multi_tenant_005 migration)
   const defaultOrgResult = await pool.query(`
-    SELECT id FROM organizations WHERE slug = 'default-org' LIMIT 1
+    SELECT id FROM organizations WHERE slug = 'smart-innovations-energy' LIMIT 1
   `);
   
   if (defaultOrgResult.rows.length === 0) {
-    throw new Error('Default organization not found. Please run SaaS migrations first.');
+    throw new Error('Default organization not found. Please run Multi-Tenant migrations first.');
   }
   
   const defaultOrgId = defaultOrgResult.rows[0].id;
   console.log(`Using default organization: ${defaultOrgId}`);
 
   // Create default admin user with password (assigned to default organization)
-  const adminPassword = await bcrypt.hash('tech1', saltRounds);
+  const defaultAdminPw = process.env.DEFAULT_ADMIN_PASSWORD || process.env.DEFAULT_USER_PASSWORD || 'changeme';
+  const adminPassword = await bcrypt.hash(defaultAdminPw, saltRounds);
   const adminUser = await pool.query(`
     INSERT INTO users (username, email, full_name, role, password_hash, is_active, organization_id)
     VALUES ('admin', 'admin@solarom.com', 'System Administrator', 'admin', $1, true, $2)
@@ -135,7 +183,8 @@ async function seedInitialData(pool) {
   `, [adminPassword, defaultOrgId]);
 
   // Create default technician user with password (assigned to default organization)
-  const techPassword = await bcrypt.hash('tech123', saltRounds);
+  const defaultTechPw = process.env.DEFAULT_TECH_PASSWORD || process.env.DEFAULT_USER_PASSWORD || 'changeme';
+  const techPassword = await bcrypt.hash(defaultTechPw, saltRounds);
   const techUser = await pool.query(`
     INSERT INTO users (username, email, full_name, role, password_hash, is_active, organization_id)
     VALUES ('tech1', 'tech1@solarom.com', 'John Technician', 'technician', $1, true, $2)
@@ -144,8 +193,8 @@ async function seedInitialData(pool) {
   `, [techPassword, defaultOrgId]);
 
   console.log('Default users created:');
-  console.log('  Admin: username=admin, password=tech1');
-  console.log('  Technician: username=tech1, password=tech123');
+  console.log(`  Admin: username=admin, password=${defaultAdminPw === 'changeme' ? 'changeme (set DEFAULT_ADMIN_PASSWORD env var)' : '***'}`);
+  console.log(`  Technician: username=tech1, password=${defaultTechPw === 'changeme' ? 'changeme (set DEFAULT_TECH_PASSWORD env var)' : '***'}`);
 
   // Create sample Weather Station asset (assigned to default organization)
   const weatherStation = await pool.query(`

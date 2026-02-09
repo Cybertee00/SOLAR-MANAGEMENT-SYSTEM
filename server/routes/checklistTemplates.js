@@ -94,7 +94,7 @@ module.exports = (pool) => {
   });
 
   // Get checklist template by ID
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', requireAuth, async (req, res) => {
     try {
       // System owners without a selected company should see no templates
       const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');
@@ -131,7 +131,7 @@ module.exports = (pool) => {
   });
 
   // Get checklist templates by asset type
-  router.get('/asset-type/:assetType', async (req, res) => {
+  router.get('/asset-type/:assetType', requireAuth, async (req, res) => {
     try {
       // System owners without a selected company should see no templates
       const { isSystemOwnerWithoutCompany } = require('../utils/organizationFilter');

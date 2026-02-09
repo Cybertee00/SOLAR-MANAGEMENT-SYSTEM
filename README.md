@@ -226,6 +226,7 @@ The system displays a status indicator at the top of the screen showing:
 
 ### Calendar & Scheduling
 - **Year Calendar View**: Complete annual view of all scheduled tasks
+- **Auto-Navigation**: Calendar automatically displays the current month on load
 - **Task Frequency Support**: Daily, Weekly, Monthly, Quarterly, Bi-Monthly, and Annual frequencies
 - **Outstanding Tasks Highlighting**: Visual indicators for overdue or outstanding tasks
 - **Calendar Event Management**: Automatic generation and tracking of scheduled maintenance
@@ -301,10 +302,7 @@ SPHAiRPlatform supports secure, automated deployment with:
 - **Health Monitoring**: Built-in health checks and status endpoints
 
 For deployment instructions, see:
-- **[Quick Deployment Reference](./README_DEPLOYMENT.md)** - Quick start guide
-- **[Deployment Guide](./DEPLOYMENT_GUIDE.md)** - Complete deployment documentation
-- **[Deployment Architecture](./DEPLOYMENT_ARCHITECTURE.md)** - Architecture details
-- **[Infrastructure Cost Analysis](./INFRASTRUCTURE_COST_ANALYSIS.md)** - 90-day deployment cost analysis and platform recommendations
+- **[Complete Deployment Guide](./DEPLOYMENT_GUIDE_SINGLE_COMPANY.md)** - Step-by-step deployment guide with pricing and all details
 - **API**: RESTful APIs
 
 ## Prerequisites
